@@ -32,7 +32,7 @@ class DataNodeHeader(object):
     OP_RETRIEVE = 1
     OP_REMOVE = 2
 
-class DataNodeQuery(ServerHandle):
+class DataNodeStore(ServerHandle):
     def process_query(self):
         if self.header['op']==DataNodeHeader.OP_STORE:
             return self.store_block()
@@ -101,18 +101,30 @@ class DataNodeQuery(ServerHandle):
     def retrieve_block(self):
         # Read block properties
         block_id = self.header['id']
-        path = os.path.join(self.server.config.datadir, block_id)
+        block_path = os.path.join(self.server.config.datadir, block_id)
         block_size = os.path.getsize(path)
-        logging.info("Sending block '%s' (%d bytes) to %s."%(block_id, block_size, self.address))
+        block_offset = self.header['offset'] if ('offset' in self.header) else 0
+        block_length = self.header['length'] if ('length' in self.header) else block_size
+
+        # Do error control
+        if block_length+block_offset < block_size:
+            return ServerResponse.error(msg='The requested data is larger than block_size.')
+
+        # Measuring size
+        logging.info("Sending block '%s' (%d bytes, %d offset) to %s."%(block_id, block_length, block_offset, self.address))
     
         # Send block size
-        self.send(block_size)
+        self.send(block_length)
 
         # Process block
         for data in FileIterable(path):
             self.socket.sendall(data)
 
         return ServerResponse.ok(msg='Block retrieved successfully.')
+
+    def retrieve_block_callback(self, data):
+        """Called by FileBufferedIO in :py:meth:retrieve_block"""
+        self.socket.sendall(data)
 
 class DataNodeNotifier(object):
     def __init__(self, config, server):
@@ -146,7 +158,7 @@ class DataNode(Server):
     def __init__(self, config):
         self.config = config
         logging.info("Configuring DataNode to listen on localhost:%d"%(self.config.port))
-        Server.__init__(self, DataNodeQuery, port=self.config.port)
+        Server.__init__(self, DataNodeStore, port=self.config.port)
         self.notifier = DataNodeNotifier(self.config, self)
         self.lock_file = os.path.join(self.config.datadir, '.lock')
 
