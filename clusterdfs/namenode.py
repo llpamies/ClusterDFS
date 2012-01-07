@@ -71,20 +71,3 @@ class NameNode(Server):
     def finalize(self):
         logging.info("Finalizing NameNode...")
         pass
-
-if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
-
-    from processname import setprocname
-    if not setprocname():
-        logging.error('Cannot change the process for %s.', __file__)
-
-    parser = argparse.ArgumentParser(description='NameNode: tracker for datanodes.')
-    parser.add_argument('-p', action="store", default=None, dest="port", type=int, help="Port where NameNode listens.")
-    config = NameNodeConfig(parser.parse_args())
-
-    nn = NameNode(config)
-    try:
-        nn.init()
-    except KeyboardInterrupt:
-        nn.finalize()

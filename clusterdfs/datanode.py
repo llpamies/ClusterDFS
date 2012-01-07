@@ -10,7 +10,7 @@ import argparse
 
 from namenode import NameNodeHeader
 from networking import *
-from bufferedio import FileBufferedIO, SocketBufferedIO
+from bufferedio import FileInputStream, FileOutputStream, SocketInputStream, SocketOutputStream
 
 class DataNodeConfig(object):
     port = 7777
@@ -32,7 +32,7 @@ class DataNodeHeader(object):
     OP_RETRIEVE = 1
     OP_REMOVE = 2
 
-class DataNodeStore(ServerHandle):
+class DataNodeQuery(ServerHandle):
     def process_query(self):
         if self.header['op']==DataNodeHeader.OP_STORE:
             return self.store_block()
@@ -41,16 +41,15 @@ class DataNodeStore(ServerHandle):
         else:
             assert False
     
-    def forward_block(self, dst_fd, dst_node):
-        def inner(data):
-            if dst_node: dst_node.socket.sendall(data)
-            dst_fd.write(data)
-        return inner
-
     def store_block(self):
+        # Should be xor the content?
+        xor = self.header['xor']
+
         # Read block properties
         block_id = self.header['id']
+        block_path = os.path.join(self.server.config.datadir, block_id)
         block_size = self.header['length']
+
         logging.info("Receiving block '%s' (%d bytes) from %s.", block_id, block_size, self.address)
 
         # Get the forward list and the next forward node
@@ -64,28 +63,39 @@ class DataNodeStore(ServerHandle):
                 next_node = Client(*forward_list[0])
                 next_forward_list = forward_list[1:]
 
-        # Send header to next node
-        if next_node:
-            header = self.header.copy()
-            header['fwdlist'] = next_forward_list
-            next_node.send(header)
-
-        # Destination file.
-        dst_fd = io.open(os.path.join(self.server.config.datadir, block_id), 'wb')
-
         try:
-            # Process incoming data
-            SocketBufferedIO(self.socket, block_size, self.forward_block(dst_fd, next_node)).run()
-            
-            # Receive response from next_node
+            # prepare streams...
+            block_input_stream = SocketInputStream(self.socket, block_size)
+            if xor:
+                local_block_output_stream = XOROutputStream(block_path)
+            else:
+                local_block_output_stream = FileOutputStream(block_path)
+
             if next_node:
+                # Send header to next node
+                header = self.header.copy()
+                header['xor'] = xor
+                header['fwdlist'] = next_forward_list
+                next_node.send(header)
+            
+                # Prepare stream
+                next_node_output_stream = SocketOutputStream(next_node.socket)
+                
+                # store and send to next node
+                block_input_data.sendto(local_block_output_stream, next_node_output_stream)
+            
+                # Receive response from next_node
                 response = next_node.recv()
                 if response['code']==ServerResponse.RESPONSE_OK:
                     logging.info("Block '%s' (%d bytes) stored & forwarded successfully."%(block_id, block_size))
                     return ServerResponse.ok(msg='Block stored & forwarded successfully.')
                 else:
                     return response
+
             else:
+                # store only
+                block_input_data.sendto(local_block_output_stream)
+            
                 logging.info("Block '%s' (%d bytes) stored successfully."%(block_id, block_size))
                 return ServerResponse.ok(msg='Block stored successfully.')
 
@@ -94,11 +104,14 @@ class DataNodeStore(ServerHandle):
             return ServerResponse.error(msg='Transmission failed.')
 
         finally:
-            # Clean-up resources
-            if next_node: next_node.kill()
-            dst_fd.close()
+            if next_node: next_node.kill() # there is no need to close output_stream since endpoint does it.
+            block_input_stream.close()
+            local_block_output_stream.close()
 
     def retrieve_block(self):
+        # Should be xor the content?
+        xor = self.header['xor']
+
         # Read block properties
         block_id = self.header['id']
         block_path = os.path.join(self.server.config.datadir, block_id)
@@ -110,21 +123,26 @@ class DataNodeStore(ServerHandle):
         if block_length+block_offset < block_size:
             return ServerResponse.error(msg='The requested data is larger than block_size.')
 
-        # Measuring size
         logging.info("Sending block '%s' (%d bytes, %d offset) to %s."%(block_id, block_length, block_offset, self.address))
     
         # Send block size
+        # TODO: Send block header instead of block size!
         self.send(block_length)
 
-        # Process block
-        for data in FileIterable(path):
-            self.socket.sendall(data)
+        try:
+            # Send block data
+            block_finput_stream = FileInputStream(block_path, block_length)
+            local_block_output_stream = SocketOutputStream(self.socket)
+            block_finput_stream.sendto(local_block_output_stream)
+            return ServerResponse.ok(msg='Block retrieved successfully.')
 
-        return ServerResponse.ok(msg='Block retrieved successfully.')
-
-    def retrieve_block_callback(self, data):
-        """Called by FileBufferedIO in :py:meth:retrieve_block"""
-        self.socket.sendall(data)
+        except IOError:
+            logging.info("Transmission from %s failed.", self.address)
+            return ServerResponse.error(msg='Transmission failed.')
+        
+        finally:
+            # there is no need to close output_stream since endpoint does it.
+            block_finput_stream.close()
 
 class DataNodeNotifier(object):
     def __init__(self, config, server):
@@ -158,7 +176,7 @@ class DataNode(Server):
     def __init__(self, config):
         self.config = config
         logging.info("Configuring DataNode to listen on localhost:%d"%(self.config.port))
-        Server.__init__(self, DataNodeStore, port=self.config.port)
+        Server.__init__(self, DataNodeQuery, port=self.config.port)
         self.notifier = DataNodeNotifier(self.config, self)
         self.lock_file = os.path.join(self.config.datadir, '.lock')
 
@@ -186,29 +204,3 @@ class DataNode(Server):
         assert os.path.exists(self.lock_file)
         logging.info("Unlocking %s", self.lock_file)
         os.remove(self.lock_file)
-        
-if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
-
-    from processname import setprocname
-    if not setprocname():
-        logging.error('Cannot change the process for %s.', __file__)
-
-    parser = argparse.ArgumentParser(description='DataNode')
-    parser.add_argument('-d', action="store", default=None, dest="datadir", type=str, help="Directory to store raw data.")
-    parser.add_argument('-l', action="store", default="0.0.0.0", dest="bind_addr", type=str, help="DataNode binding address.")
-    parser.add_argument('-p', action="store", default=None, dest="port", type=int, help="Port where DataNode listens.")
-    parser.add_argument('-na', action="store", default='localhost', dest="namenode_addr", type=str, help="Address of the NameNode.")
-    parser.add_argument('-np', action="store", default=7770, dest="namenode_port", type=int, help="Port of the NameNode.")
-    config = DataNodeConfig(parser.parse_args())
-
-    try:
-        dn = DataNode(config)
-        dn.init()
-        dn.finalize()
-    except KeyboardInterrupt:
-        logging.info("Finalizing DataNode...")
-        dn.finalize()
-    except Exception:
-        logging.error("Fatal Error!!")
-        raise
