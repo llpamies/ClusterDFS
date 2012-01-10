@@ -6,17 +6,29 @@ import socket
 import gevent.server
 import gevent.socket
 
-class ServerResponse(object):
-    RESPONSE_OK = 0
-    RESPONSE_ERROR = 1
+class NetworkHeader(object):
+    OK = 0
+    ERROR = 1
+    QUERY = 2
+    RESPONSE = 3
 
     @classmethod
-    def ok(cls, msg='', data={}):
-        return {'code':cls.RESPONSE_OK, 'msg':msg, 'data':data}
+    def ok(cls, msg=''):
+        return {'code':cls.OK, 'msg':msg}
 
     @classmethod
-    def error(cls, msg='', data={}):
-        return {'code':cls.RESPONSE_ERROR, 'msg':msg, 'data':data}
+    def error(cls, msg=''):
+        return {'code':cls.ERROR, 'msg':msg}
+
+    @classmethod
+    def query(cls, **kwargs):
+        kwargs['code'] = cls.QUERY
+        return kwargs
+
+    @classmethod
+    def response(cls, **kwargs):
+        kwargs['code'] = cls.RESPONSE
+        return kwargs
 
 class NetworkException(Exception):
     pass
@@ -53,26 +65,38 @@ class ServerHandle(NetworkEndpoint):
     def __init__(self, server, socket, address):
         NetworkEndpoint.__init__(self, socket)
         self.address = address
-        self.header = None
         self.server = server
+        self.response_sent = False
 
     def process_query(self):
-        print self.header
-        return ServerResponse.ok()
-    
+        return NetworkHeader.ok()
+   
+    def send_response(self, resp):
+        if self.response_sent:
+            raise Exception('Response was already sent.')
+        self.response_sent = True
+        self.send(resp)
+
     def handle(self):
         try:
             self.header = self.recv()
             response = self.process_query()
-            if response!=None: self.send(response)
+            if response!=None:
+                if self.response_sent:
+                    raise Exception('Response was already sent.')
+                self.send(response)
+            elif not self.response_sent:
+                self.send(NetworkHeader.ok())
 
-        except NetworkException, e:
+        except NetworkException as e:
             logging.error("Failed connection from %s: %s."%(repr(self.address), e))
-            self.socket.close()
         
-        except socket.error, (value,message):
+        except socket.error as (value,message):
             logging.error("Failed connection from %s: %s."%(repr(self.address), message))
-            self.socket.close()
+
+        except Exception as e:
+            self.send(NetworkHeader.error(msg="Unknown server internal error"))
+            raise
 
 class Server(object):
     def __init__(self, handle_class=ServerHandle, addr='', port=7777):
@@ -82,9 +106,13 @@ class Server(object):
     def serve(self):
         self.server.serve_forever()
 
-    def handle(self, socket, address):
-        server_handle = self.handle_class(self, socket, address)
-        server_handle.handle()
+    def handle(self, s, address):
+        try:
+            server_handle = self.handle_class(self, s, address)
+            server_handle.handle()
+        finally:
+            s.shutdown(socket.SHUT_WR)
+            s.close()
         
 class Client(NetworkEndpoint):
     def __init__(self, addr, port):

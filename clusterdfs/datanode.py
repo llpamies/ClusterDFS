@@ -53,7 +53,7 @@ class DataNodeQuery(ServerHandle):
 
         # Check headers
         if block_size<=0:
-            return ServerResponse.error(msg='Block size be larger than zero.')
+            return NetworkHeader.error(msg='Block size be larger than zero.')
 
         logging.info("Receiving block '%s' (%d bytes) from %s.", block_id, block_size, self.address)
 
@@ -94,9 +94,9 @@ class DataNodeQuery(ServerHandle):
             
                 # Receive response from next_node
                 response = next_node.recv()
-                if response['code']==ServerResponse.RESPONSE_OK:
+                if response['code']==NetworkHeader.OK:
                     logging.info("Block '%s' (%d bytes) stored & forwarded successfully."%(block_id, block_size))
-                    return ServerResponse.ok(msg='Block stored & forwarded successfully.')
+                    return NetworkHeader.ok(msg='Block stored & forwarded successfully.')
                 else:
                     return response
 
@@ -105,11 +105,11 @@ class DataNodeQuery(ServerHandle):
                 block_input_stream.sendto(local_block_output_stream)
             
                 logging.info("Block '%s' (%d bytes) stored successfully."%(block_id, block_size))
-                return ServerResponse.ok(msg='Block stored successfully.')
+                return NetworkHeader.ok(msg='Block stored successfully.')
 
         except IOError:
             logging.info("Transmission from %s failed.", self.address)
-            return ServerResponse.error(msg='Transmission failed.')
+            return NetworkHeader.error(msg='Transmission failed.')
 
         finally:
             # Release sockets and close files
@@ -130,25 +130,23 @@ class DataNodeQuery(ServerHandle):
         block_length = self.header['length'] if ('length' in self.header) else block_size
 
         # Do error control
-        if block_length+block_offset < block_size:
-            return ServerResponse.error(msg='The requested data is larger than block_size.')
+        if block_length+block_offset > block_size:
+            return NetworkHeader.error(msg='The requested data is larger than block_size.')
 
         logging.info("Sending block '%s' (%d bytes, %d offset) to %s."%(block_id, block_length, block_offset, self.address))
-    
-        # Send block size
-        # TODO: Send block header instead of block size!
-        self.send(block_length)
 
         try:
+            # Send response
+            self.send_response(NetworkHeader.response(length=block_length))
+            
             # Send block data
             block_finput_stream = FileInputStream(block_path, block_length)
             local_block_output_stream = SocketOutputStream(self.socket)
             block_finput_stream.sendto(local_block_output_stream)
-            return ServerResponse.ok(msg='Block retrieved successfully.')
 
         except IOError:
             logging.info("Transmission from %s failed.", self.address)
-            return ServerResponse.error(msg='Transmission failed.')
+            return NetworkHeader.error(msg='Transmission failed.')
         
         finally:
             # there is no need to close output_stream since endpoint does it.
@@ -173,7 +171,7 @@ class DataNodeNotifier(object):
                 ne.send(self.ping)
                 ne.send([])
                 response = ne.recv()
-                if response['code']!=ServerResponse.RESPONSE_OK:
+                if response['code']!=NetworkHeader.OK:
                     logging.error('Error delivering ping to nameserver: %s', response['msg']) 
 
             except socket.error, (value,message):
