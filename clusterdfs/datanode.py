@@ -19,6 +19,7 @@ class DataNodeConfig(object):
     namenode_addr = 'localhost'
     namenode_port = 7770
     ping_timeout = 10
+    isolated = False
 
     def __init__(self, args):
         for k, v in args.__dict__.iteritems():
@@ -43,12 +44,16 @@ class DataNodeQuery(ServerHandle):
     
     def store_block(self):
         # Should be xor the content?
-        xor = self.header['xor']
+        xor = self.header['xor'] if 'xor' in self.header else False
 
         # Read block properties
         block_id = self.header['id']
         block_path = os.path.join(self.server.config.datadir, block_id)
         block_size = self.header['length']
+
+        # Check headers
+        if block_size<=0:
+            return ServerResponse.error(msg='Block size be larger than zero.')
 
         logging.info("Receiving block '%s' (%d bytes) from %s.", block_id, block_size, self.address)
 
@@ -62,6 +67,9 @@ class DataNodeQuery(ServerHandle):
                 logging.info("Remaining forwards: %d.", len(forward_list)-1)
                 next_node = Client(*forward_list[0])
                 next_forward_list = forward_list[1:]
+
+        block_input_stream = None
+        local_block_output_stream = None
 
         try:
             # prepare streams...
@@ -94,7 +102,7 @@ class DataNodeQuery(ServerHandle):
 
             else:
                 # store only
-                block_input_data.sendto(local_block_output_stream)
+                block_input_stream.sendto(local_block_output_stream)
             
                 logging.info("Block '%s' (%d bytes) stored successfully."%(block_id, block_size))
                 return ServerResponse.ok(msg='Block stored successfully.')
@@ -104,18 +112,20 @@ class DataNodeQuery(ServerHandle):
             return ServerResponse.error(msg='Transmission failed.')
 
         finally:
-            if next_node: next_node.kill() # there is no need to close output_stream since endpoint does it.
-            block_input_stream.close()
-            local_block_output_stream.close()
+            # Release sockets and close files
+            if next_node:
+                next_node.kill() # there is no need to close output_stream since endpoint does it.
+            if local_block_output_stream:
+                local_block_output_stream.close()
 
     def retrieve_block(self):
         # Should be xor the content?
-        xor = self.header['xor']
+        xor = self.header['xor'] if 'xor' in self.header else False
 
         # Read block properties
         block_id = self.header['id']
         block_path = os.path.join(self.server.config.datadir, block_id)
-        block_size = os.path.getsize(path)
+        block_size = os.path.getsize(block_path)
         block_offset = self.header['offset'] if ('offset' in self.header) else 0
         block_length = self.header['length'] if ('length' in self.header) else block_size
 
@@ -177,30 +187,12 @@ class DataNode(Server):
         self.config = config
         logging.info("Configuring DataNode to listen on localhost:%d"%(self.config.port))
         Server.__init__(self, DataNodeQuery, port=self.config.port)
-        self.notifier = DataNodeNotifier(self.config, self)
-        self.lock_file = os.path.join(self.config.datadir, '.lock')
+        if not self.config.isolated:
+            self.notifier = DataNodeNotifier(self.config, self)
 
     def init(self):
-        self.lock_datadir()
         self.serve()
 
     def finalize(self):
-        self.notifier.stop()
-        self.unlock_datadir()
-
-    def lock_datadir(self):
-        logging.info("Locking %s", self.lock_file)
-
-        if not os.path.exists(self.config.datadir):
-            raise Exception("DataNode cannot lock data dir (invalid datadir).")
-
-        elif os.path.exists(self.lock_file):
-            raise Exception("DataNode cannot lock data dir (locked dir).")
-
-        else:
-            open(self.lock_file, 'w').close()
-
-    def unlock_datadir(self):
-        assert os.path.exists(self.lock_file)
-        logging.info("Unlocking %s", self.lock_file)
-        os.remove(self.lock_file)
+        if not self.config.isolated:
+            self.notifier.stop()

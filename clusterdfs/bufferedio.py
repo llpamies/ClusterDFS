@@ -9,16 +9,14 @@ class IOBuffer(object):
     def __init__(self, size=io.DEFAULT_BUFFER_SIZE):
         self.size = size
         self.buff = bytearray(self.size)
-        self.length = 0
-
-    def reset(self):
+        self.mem = memoryview(self.buff)
         self.length = 0
 
     def data(self):
         if self.length==self.size:
             return self.buff
         elif self.length<self.size:
-            return buffer(self.buff, 0, self.length)
+            return self.mem[:self.length]
         else:
             assert False
 
@@ -31,58 +29,65 @@ class BufferedConsumer(object):
 
     def run(self):
         for iobuffer in self.read_queue:
-            self.output_stream.write(iobuffer.data())
+            self.output_stream.write(iobuffer)
             self.reusable_buffers.put(iobuffer)
 
-class ReusableBuffers(gevent.queue.Queue):
-    def __init__(self, num_consumers, *args, **kwargs):
+class SyncronizedBufferQueue(gevent.queue.Queue):
+    def __init__(self, num_buffers, *args, **kwargs):
         gevent.queue.Queue.__init__(self, *args, **kwargs)
-        self.num_consumers = num_consumers
+        self.num_buffers = num_buffers
         self.counters = collections.defaultdict(int)
 
-    def put(self, item, *args, force=False, **kwargs):
+    def put(self, item, *args, **kwargs):
+        if 'force' in kwargs:
+            force = kwargs.pop('force')
+        else:
+            force = False
+
         if force:
             gevent.queue.Queue.put(self, item, *args, **kwargs)
             self.counters[item] = 0
         else:
             self.counters[item] += 1
-            if self.counters[item]==self.num_consumers:
+            if self.counters[item]==self.num_buffers:
                 gevent.queue.Queue.put(self, item, *args, **kwargs)
                 self.counters[item] = 0
 
 class InputStream(object):
     def __init__(self, size):
-        if size>0:
+        if size<=0:
             raise TypeError("size must be positive.")
         self.size = size
 
-    def sendto(self, *output_streams, num_buffers=2):
+    def iterated_read(self, queue):
+        read = 0
+        while read<self.size:
+            iobuffer = queue.get()
+            read += self.read(iobuffer, nbytes=self.size-read)
+            yield iobuffer
+
+    def sendto(self, *output_streams, **kwargs):
+        if 'num_buffers' in kwargs:
+            num_buffers = kwargs['num_buffers']
+        else:
+            num_buffers = 2
+
         if len(output_streams)==0:
             raise TypeError("output_streams should be a non-empty list.")
 
         if num_buffers<=0:
             raise TypeError("num_buffers must be positive.")
 
-        consumers = []
-        for output_stream in output_streams:
-            consumers.append(BufferedConsumer(output_stream, self.reusable_buffers))
-            
-        reusable_buffers = ReusableBuffers(len(self.consumers))
+        reusable_buffers = SyncronizedBufferQueue(len(output_streams))
         for i in xrange(num_buffers):
             reusable_buffers.put(IOBuffer(), force=True)
 
+        consumers = []
+        for output_stream in output_streams:
+            consumers.append(BufferedConsumer(output_stream, reusable_buffers))
+            
         # read input data and send it to consumers
-        read = 0
-        while read<self.size:
-            iobuffer = reusable_buffers.get()
-
-            remaining = self.size-read
-            if remaining >= iobuffer.size:
-                num = self.read(iobuffer.buff)
-            else:
-                num = self.read(buffer(iobuffer.buff, 0, remaining))
-            iobuffer.length = num
-            read += num
+        for iobuffer in self.iterated_read(reusable_buffers):
             for consumer in consumers:
                 consumer.read_queue.put(iobuffer)
 
@@ -96,14 +101,20 @@ class InputStream(object):
 
 class FileInputStream(InputStream):
     def __init__(self, filename, size, offset=0):
-        InputStream.__init__(size)
+        InputStream.__init__(self, size)
         self.fileio = io.open(filename, 'rb')
         self.fileio.seek(offset)
 
-    def read(self, buff):
-        num = self.fileio.readinto(buff)
+    def read(self, iobuffer, nbytes=None):
+        if nbytes==None or nbytes >= iobuffer.size:
+            num = self.fileio.readinto(iobuffer.buff)
+        else:
+            num = self.fileio.readinto(iobuffer.mem[:nbytes])
+        
         if num==0:
             raise IOError("File error or probably reached end of file.")
+        
+        iobuffer.length = num
         return num
 
     def close(self):
@@ -113,9 +124,9 @@ class FileOutputStream(object):
     def __init__(self, filename):
         self.fileio = io.open(filename, 'wb')
 
-    def write(self, buff):
-        num = self.fileio.write(buff)
-        if num!=len(buff):
+    def write(self, iobuffer):
+        num = self.fileio.write(iobuffer.data())
+        if num!=iobuffer.length:
             raise IOError("Error writing to file.")
 
     def close(self):
@@ -123,13 +134,19 @@ class FileOutputStream(object):
 
 class SocketInputStream(InputStream):
     def __init__(self, socket, size):
-        InputStream.__init__(size)
+        InputStream.__init__(self, size)
         self.socket = socket
 
-    def read(self, buff):
-        num = self.socket.recv_into(buff)
+    def read(self, iobuffer, nbytes=None):
+        if nbytes==None or nbytes >= iobuffer.size:
+            num = self.socket.recv_into(iobuffer.buff)
+        else:
+            num = self.socket.recv_into(iobuffer.mem[:nbytes])
+        
         if num<=0:
             raise IOError("Socket disconnected.")
+        
+        iobuffer.length = num
         return num
 
     def close(self):
@@ -140,71 +157,9 @@ class SocketOutputStream(object):
     def __init__(self, socket):
         self.socket = socket
 
-    def write(self, buff):
-        self.socket.sendall(buff)
+    def write(self, iobuffer):
+        self.socket.sendall(iobuffer.data())
     
     def close(self):
         self.socket.shutdown(socket.SHUT_WR)
         self.socket.close()
-
-class XOROutputStream(FileOutputStream):
-    def __init__(self, filename):
-        if not sys.path.exists(filename):
-            raise ValueError('filename must exist')
-
-        self.fileio = io.open(filename, 'r+b')
-        self.iobuffer = IOBuffer()
-    
-    def write(self, buff):
-        num = len(buff)
-        temp = buffer(self.iobuffer.buff, 0, num)
-        read = self.fileio.readinto(temp)
-        assert read==num
-        self.fileio.seek(-num, whence=io.SEEK_CUR)
-
-        # Do the XOR using numpy arrays
-        s = (num,)
-        a = numpy.ndarray(shape=s, dtype=numpy.uint8, buffer=buff)
-        b = numpy.ndarray(shape=s, dtype=numpy.uint8, buffer=temp)
-        a ^= b
-
-        return FileOutputStream.write(self, buff)
-
-class XORInputStream(InputStream):
-    """ Takes any input stream and a file input stream, and does the XOR
-        of both.
-    """
-    def __init__(self, any_input_stream, file_input_stream, size):
-        if not isinstance(any_input_stream, InputStream):
-            raise TypeError('any_input_stream should be a FileInputStream')
-
-        if not isinstance(file_input_stream, FileInputStream):
-            raise TypeError('file_input_stream should be a FileInputStream')
-
-        self.any_input_stream = any_input_stream
-        self.file_input_stream = file_input_stream
-
-        self.iobuffer = IOBuffer()
-
-    def read(self, buff):
-        assert len(buff)<=self.iobuffer.size
-
-        num = numself.any_input_stream.read(buff)
-        if num<=0:
-            raise IOError("Unknown IO error")
-        
-        temp = buffer(self.iobuffer.buff, 0, num)
-        fnum = self.file_input_stream.read(temp)
-        assert num==fnum, "cannot read enough bytes from file"
-        
-        # Do the XOR using numpy arrays
-        s = (num,)
-        a = numpy.ndarray(shape=s, dtype=numpy.uint8, buffer=buff)
-        b = numpy.ndarray(shape=s, dtype=numpy.uint8, buffer=temp)
-        a ^= b
-
-        return num
-
-    def close(self):
-        self.any_input_stream.close()
-        self.file_input_stream.close()
