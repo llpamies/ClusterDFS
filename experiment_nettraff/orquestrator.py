@@ -25,4 +25,4 @@ for block_id in xrange(blocks_per_node):
     repairing_node = random.choice(bulk_nodes)
     repairing_from = random.sample(data_nodes, k) 
     print repairing_node, repairing_from
-    #gevent.spawn(repair_block, repairing_node, repairing_from, block_size)
+    gevent.spawn(repair_block, repairing_node, repairing_from, block_size)
