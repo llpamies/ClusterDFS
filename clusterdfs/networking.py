@@ -41,7 +41,7 @@ class NetworkEndpoint(object):
         # get data_len
         raw_data = self.socket.recv(4)
         if len(raw_data)!=4:
-            raise NetworkException("Connection lost receiving header")
+            raise IOError("Connection lost receiving header: got %d bytes."%len(raw_data))
         data_len, = struct.unpack('<I', raw_data)
 
         # get data
@@ -73,7 +73,7 @@ class ServerHandle(NetworkEndpoint):
    
     def send_response(self, resp):
         if self.response_sent:
-            raise Exception('Response was already sent.')
+            raise NetworkException('Response was already sent.')
         self.response_sent = True
         self.send(resp)
 
@@ -83,19 +83,17 @@ class ServerHandle(NetworkEndpoint):
             response = self.process_query()
             if response!=None:
                 if self.response_sent:
-                    raise Exception('Response was already sent.')
+                    raise NetworkException('Response was already sent.')
                 self.send(response)
             elif not self.response_sent:
                 self.send(NetworkHeader.ok())
 
-        except NetworkException as e:
-            logging.error("Failed connection from %s: %s."%(repr(self.address), e))
-        
         except socket.error as (value,message):
             logging.error("Failed connection from %s: %s."%(repr(self.address), message))
 
         except Exception as e:
-            self.send(NetworkHeader.error(msg="Unknown server internal error"))
+            logging.error("Internal error: "+unicode(e))
+            self.send(NetworkHeader.error(msg=unicode(e)))
             raise
 
 class Server(object):
@@ -116,4 +114,9 @@ class Server(object):
         
 class Client(NetworkEndpoint):
     def __init__(self, addr, port):
-        NetworkEndpoint.__init__(self, gevent.socket.create_connection((addr, port)))
+        self.address = (addr, port)
+        try:
+            socket = gevent.socket.create_connection(self.address)
+        except:
+            raise NetworkException("Cannot connect to "+unicode(self.address))
+        NetworkEndpoint.__init__(self, socket)

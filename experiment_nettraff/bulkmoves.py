@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 import os
+import sys
+sys.path.append(os.getcwd())
+
 import time
 
 from clusterdfs.coding import XORInputStream
@@ -49,7 +52,7 @@ class BulkHandle(ServerHandle):
         for client in dn_clients:
             serv_resp = client.recv()
             if serv_resp['code']==NetworkHeader.ERROR:
-                return NetworkHeader.error("One of the server replied: "+serv_resp['msg'])
+                return NetworkHeader.error(repr(client.address)+" replied: "+serv_resp['msg'])
             else:
                 sizes.append(serv_resp['length'])
 
@@ -59,9 +62,16 @@ class BulkHandle(ServerHandle):
             raise Exception('The files do not have the same size.')
 
         # Recv file
-        xis = XORInputStream([SocketInputStream(c.socket, size) for c in dn_clients], size)
-        xis.sendto(FileOutputStream('/dev/null'))
- 
+        fos = None
+        xis = None
+        try:
+            fos = FileOutputStream('/dev/null')
+            xis = XORInputStream([SocketInputStream(c.socket, size) for c in dn_clients], size)
+            xis.sendto(fos)
+        finally:
+            if fos!=None: fos.close()
+            if xis!=None: xis.close()
+
         return NetworkHeader.response(time=time.time()-t)
        
 if __name__=='__main__':

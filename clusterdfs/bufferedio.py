@@ -26,6 +26,7 @@ class BufferedConsumer(object):
         self.reusable_buffers = reusable_buffers
         self.read_queue = gevent.queue.Queue()
         self.process = gevent.spawn(self.run)
+        self.process.link_exception(None)
 
     def run(self):
         for iobuffer in self.read_queue:
@@ -106,16 +107,20 @@ class FileInputStream(InputStream):
         self.fileio.seek(offset)
 
     def read(self, iobuffer, nbytes=None):
-        if nbytes==None or nbytes >= iobuffer.size:
-            num = self.fileio.readinto(iobuffer.buff)
+        if nbytes==None:
+            nbytes = iobuffer.size
         else:
-            num = self.fileio.readinto(iobuffer.mem[:nbytes])
+            nbytes = min(iobuffer.size, nbytes)
+
+        read = 0
+        while read<nbytes:
+            read += self.fileio.readinto(iobuffer.mem[read:nbytes])
         
-        if num==0:
+        if read==0:
             raise IOError("File error or probably reached end of file.")
         
-        iobuffer.length = num
-        return num
+        iobuffer.length = read
+        return read
 
     def close(self):
         self.fileio.close()
@@ -133,21 +138,29 @@ class FileOutputStream(object):
         self.fileio.close()
 
 class SocketInputStream(InputStream):
-    def __init__(self, socket, size):
+    def __init__(self, socket, size, timeout=4):
         InputStream.__init__(self, size)
         self.socket = socket
+        self.socket.settimeout(timeout)
 
     def read(self, iobuffer, nbytes=None):
-        if nbytes==None or nbytes >= iobuffer.size:
-            num = self.socket.recv_into(iobuffer.buff)
+        if nbytes==None:
+            nbytes = iobuffer.size
         else:
-            num = self.socket.recv_into(iobuffer.mem[:nbytes])
+            nbytes = min(iobuffer.size, nbytes)
+
+        read = 0
+        try:
+            while read<nbytes:
+                read += self.socket.recv_into(iobuffer.mem[read:nbytes])
+        except:
+            raise IOError("Socket timeout.")
         
-        if num<=0:
+        if read<=0:
             raise IOError("Socket disconnected.")
         
-        iobuffer.length = num
-        return num
+        iobuffer.length = read
+        return read
 
     def close(self):
         self.socket.shutdown(socket.SHUT_WR)
