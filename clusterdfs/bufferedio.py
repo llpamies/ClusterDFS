@@ -1,9 +1,14 @@
 import io
+import sys
+import os.path
 import numpy
 import socket
 import gevent
 import gevent.queue
+import itertools
 import collections
+
+from common import *
 
 class IOBuffer(object):
     def __init__(self, size=io.DEFAULT_BUFFER_SIZE):
@@ -20,89 +25,168 @@ class IOBuffer(object):
         else:
             assert False
 
-class BufferedConsumer(object):
-    def __init__(self, output_stream, reusable_buffers):
-        self.output_stream = output_stream
-        self.reusable_buffers = reusable_buffers
-        self.read_queue = gevent.queue.Queue()
-        self.process = gevent.spawn(self.run)
-        self.process.link_exception(None)
+    def copy_to(self, iobuffer):
+        if self.size!=iobuffer.size:
+            raise ValueError("Buffers do not have the same size.")
+        iobuffer.mem[:] = self.mem[:]
+        iobuffer.length = self.length
+        return iobuffer
 
-    def run(self):
-        for iobuffer in self.read_queue:
-            self.output_stream.write(iobuffer)
-            self.reusable_buffers.put(iobuffer)
+@ClassLogger
+class ReusableIOBuffer(IOBuffer):
+    def __init__(self, queue, *args, **kwargs):
+        self._queue = queue
+        super(ReusableIOBuffer, self).__init__(*args, **kwargs)
 
-class SyncronizedBufferQueue(gevent.queue.Queue):
-    def __init__(self, num_buffers, *args, **kwargs):
-        gevent.queue.Queue.__init__(self, *args, **kwargs)
-        self.num_buffers = num_buffers
-        self.counters = collections.defaultdict(int)
+    def reset(self):
+        self._queue.put(self)
 
-    def put(self, item, *args, **kwargs):
-        if 'force' in kwargs:
-            force = kwargs.pop('force')
+@ClassLogger
+class DelayedReusableIOBuffer(IOBuffer):
+    '''
+        Delays the requeue until num calls to requeue.
+    '''
+    def __init__(self, iobuffer, num):
+        assert isinstance(iobuffer, ReusableIOBuffer)
+        self.iobuffer = iobuffer
+        self.num = num
+
+    def reset(self):
+        if self.num>1:
+            self.num -= 1
         else:
-            force = False
+            self.iobuffer.reset()
 
-        if force:
-            gevent.queue.Queue.put(self, item, *args, **kwargs)
-            self.counters[item] = 0
-        else:
-            self.counters[item] += 1
-            if self.counters[item]==self.num_buffers:
-                gevent.queue.Queue.put(self, item, *args, **kwargs)
-                self.counters[item] = 0
+    def __getattr__(self, attribute):
+	    return getattr(self.iobuffer, attribute)
 
+@ClassLogger
+class InputStreamReader(object):
+    def __init__(self, input_stream, num_buffers=2, debug_name=None):
+        if input_stream.size<10000:
+            raise Exception("lalala"+str(input_stream.size))
+        if not isinstance(input_stream, InputStream):
+            raise TypeError('input_stream must be an InputStream instance.')
+
+        self.debug_name = debug_name
+        self.exc_info = None
+        self.input_stream = input_stream
+        self.free_queue = gevent.queue.Queue()
+        self.busy_queue = gevent.queue.Queue()
+        self.process = gevent.spawn(self._run)
+        #self.temp_writer = None
+
+        # Generate pool of buffers
+        for i in xrange(num_buffers):
+            self.free_queue.put(ReusableIOBuffer(self.free_queue))
+
+    def _run(self):
+        try:
+            read = 0
+            while read<self.input_stream.size:
+                if __debug__: self.logger.debug("%s iteration %d/%d.", self.debug_name or hex(id(self)), read, self.input_stream.size)
+                iobuffer = self.free_queue.get()
+                read += self.input_stream.read(iobuffer, nbytes=self.input_stream.size-read)
+                self.busy_queue.put(iobuffer)
+            if __debug__: self.logger.debug("Reader has successfully finished.")
+            return False
+        
+        except Exception, e:
+            self.logger.error('Reader subprocesses got a %s exception.', e.__class__.__name__)
+            self.logger.error(unicode(e))
+            self.exc_info = sys.exc_info()
+            return True
+        
+        finally:
+            self.busy_queue.put(StopIteration)
+
+    def __iter__(self):
+        for iobuffer in self.busy_queue:
+            if self.exc_info:
+                raise self.exc_info[1], None, self.exc_info[2]
+            yield iobuffer
+        if self.process.get():
+            raise self.exc_info[1], None, self.exc_info[2]
+
+@ClassLogger
+class OutputStreamWriter(object):
+    def __init__(self, *output_streams):
+        self.num_outputs = len(output_streams)
+        self.output_streams = output_streams
+        self.exc_info = None
+        self.queues = [gevent.queue.Queue() for i in xrange(self.num_outputs)]
+        self.processes = [gevent.spawn(self._run, *x) for x in itertools.izip(self.output_streams, self.queues)]
+        self.dead = False
+
+    def stop(self):
+        for queue in self.queues:
+            queue.put(StopIteration)
+
+    def write(self, iobuffer):
+        if __debug__: self.logger.debug('Received a buffer to write.')
+        if self.dead:
+            raise IOError('Some consumer processes finished.')
+        for queue in self.queues:
+            queue.put(DelayedReusableIOBuffer(iobuffer, self.num_outputs))
+
+    def _run(self, stream, queue):
+        try:
+            for iobuffer in queue:
+                if __debug__: self.logger.debug('Processing a buffer to write.')
+                stream.write(iobuffer)
+                if __debug__: self.logger.debug('Reseting written buffer.')
+                iobuffer.reset()
+            return False
+
+        except Exception, e:
+            if self.exc_info!=None:
+                self.exc_info = sys.exc_info()
+                return True
+            else:
+                return False
+
+        finally:
+            self.dead = True
+
+    def join(self):
+        for process, queue in itertools.izip(self.processes, self.queues):
+            queue.put(StopIteration)
+            if process.get():
+                raise self.exc_info[1], None, self.exc_info[2]
+
+class ReadCountMeta(type):
+    def __new__(meta, classname, bases, classdict):
+        def new_read(self, *args, **kwargs):
+            v = self._original_read(*args, **kwargs)
+            self.read_count += v
+            return v
+        
+        classdict['read_count'] = 0
+        
+        if 'read' in classdict:
+            classdict['_original_read'] = classdict['read']
+            classdict['read'] = new_read
+
+        return type.__new__(meta, classname, bases, classdict)
+
+@ClassLogger
 class InputStream(object):
+    __metaclass__ = ReadCountMeta
+
     def __init__(self, size):
-        if size<=0:
-            raise TypeError("size must be positive.")
+        if (type(size)!=int and type(size)!=long) or size<=0:
+            raise TypeError("Parameter size must be a positive integer, got %s."%str(size))
         self.size = size
 
-    def iterated_read(self, queue):
-        read = 0
-        while read<self.size:
-            iobuffer = queue.get()
-            read += self.read(iobuffer, nbytes=self.size-read)
-            yield iobuffer
+    def is_processed(self):
+        return self.read_count>=self.size 
 
-    def sendto(self, *output_streams, **kwargs):
-        if 'num_buffers' in kwargs:
-            num_buffers = kwargs['num_buffers']
-        else:
-            num_buffers = 2
-
-        if len(output_streams)==0:
-            raise TypeError("output_streams should be a non-empty list.")
-
-        if num_buffers<=0:
-            raise TypeError("num_buffers must be positive.")
-
-        reusable_buffers = SyncronizedBufferQueue(len(output_streams))
-        for i in xrange(num_buffers):
-            reusable_buffers.put(IOBuffer(), force=True)
-
-        consumers = []
-        for output_stream in output_streams:
-            consumers.append(BufferedConsumer(output_stream, reusable_buffers))
-            
-        # read input data and send it to consumers
-        for iobuffer in self.iterated_read(reusable_buffers):
-            for consumer in consumers:
-                consumer.read_queue.put(iobuffer)
-
-        # terminate consumer processes
-        for consumer in consumers:
-            consumer.read_queue.put(StopIteration)
-        
-        # wait until all finish
-        for consumer in consumers:
-            consumer.process.join()
+    def finalize(self):
+        pass
 
 class FileInputStream(InputStream):
-    def __init__(self, filename, size, offset=0):
-        InputStream.__init__(self, size)
+    def __init__(self, filename, offset=0):
+        InputStream.__init__(self, os.path.getsize(filename))
         self.fileio = io.open(filename, 'rb')
         self.fileio.seek(offset)
 
@@ -122,9 +206,10 @@ class FileInputStream(InputStream):
         iobuffer.length = read
         return read
 
-    def close(self):
+    def finalize(self):
         self.fileio.close()
 
+@ClassLogger
 class FileOutputStream(object):
     def __init__(self, filename):
         self.fileio = io.open(filename, 'wb')
@@ -134,14 +219,13 @@ class FileOutputStream(object):
         if num!=iobuffer.length:
             raise IOError("Error writing to file.")
 
-    def close(self):
+    def finalize(self):
         self.fileio.close()
 
-class SocketInputStream(InputStream):
-    def __init__(self, socket, size, timeout=4):
+class NetworkInputStream(InputStream):
+    def __init__(self, endpoint, size):
         InputStream.__init__(self, size)
-        self.socket = socket
-        self.socket.settimeout(timeout)
+        self.endpoint = endpoint
 
     def read(self, iobuffer, nbytes=None):
         if nbytes==None:
@@ -150,11 +234,8 @@ class SocketInputStream(InputStream):
             nbytes = min(iobuffer.size, nbytes)
 
         read = 0
-        try:
-            while read<nbytes:
-                read += self.socket.recv_into(iobuffer.mem[read:nbytes])
-        except:
-            raise IOError("Socket timeout.")
+        while read<nbytes:
+            read += self.endpoint.recv_into(iobuffer.mem[read:nbytes])
         
         if read<=0:
             raise IOError("Socket disconnected.")
@@ -162,17 +243,16 @@ class SocketInputStream(InputStream):
         iobuffer.length = read
         return read
 
-    def close(self):
-        self.socket.shutdown(socket.SHUT_WR)
-        self.socket.close()
+    def finalize(self):
+        pass
 
-class SocketOutputStream(object):
-    def __init__(self, socket):
-        self.socket = socket
+@ClassLogger
+class NetworkOutputStream(object):
+    def __init__(self, endpoint):
+        self.endpoint = endpoint
 
     def write(self, iobuffer):
-        self.socket.sendall(iobuffer.data())
+        self.endpoint.send(iobuffer)
     
-    def close(self):
-        self.socket.shutdown(socket.SHUT_WR)
-        self.socket.close()
+    def finalize(self):
+        pass

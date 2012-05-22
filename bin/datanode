@@ -4,33 +4,38 @@ import sys
 sys.path.append(os.getcwd())
 
 import logging
+import logging.config
 import argparse
 
 from clusterdfs.processname import setprocname
 from clusterdfs.datanode import DataNodeConfig, DataNode
 
 if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
+    logging.config.fileConfig("./bin/datanode_logger.conf")
+    if '--optimize' in sys.argv:
+        logging.info('Running optimized version!')
+        sys.argv.remove('--optimize')
+        os.execl(sys.executable, sys.executable, '-O', *sys.argv)
+    else:
+        if not setprocname():
+            logging.error('Cannot change the process for %s.', __file__)
 
-    if not setprocname():
-        logging.error('Cannot change the process for %s.', __file__)
+        parser = argparse.ArgumentParser(description='DataNode')
+        parser.add_argument('-d', action="store", default=None, dest="datadir", type=str, help="Directory to store raw data.")
+        parser.add_argument('-l', action="store", default="0.0.0.0", dest="bind_addr", type=str, help="DataNode binding address.")
+        parser.add_argument('-p', action="store", default=None, dest="port", type=int, help="Port where DataNode listens.")
+        parser.add_argument('-na', action="store", default='localhost', dest="namenode_addr", type=str, help="Address of the NameNode.")
+        parser.add_argument('-np', action="store", default=7770, dest="namenode_port", type=int, help="Port of the NameNode.")
+        parser.add_argument('-i', action="store", default=False, dest="isolated", type=bool, help="Should the data node work without namenode.")
+        config = DataNodeConfig(parser.parse_args())
 
-    parser = argparse.ArgumentParser(description='DataNode')
-    parser.add_argument('-d', action="store", default=None, dest="datadir", type=str, help="Directory to store raw data.")
-    parser.add_argument('-l', action="store", default="0.0.0.0", dest="bind_addr", type=str, help="DataNode binding address.")
-    parser.add_argument('-p', action="store", default=None, dest="port", type=int, help="Port where DataNode listens.")
-    parser.add_argument('-na', action="store", default='localhost', dest="namenode_addr", type=str, help="Address of the NameNode.")
-    parser.add_argument('-np', action="store", default=7770, dest="namenode_port", type=int, help="Port of the NameNode.")
-    parser.add_argument('-i', action="store", default=False, dest="isolated", type=bool, help="Should the data node work without namenode.")
-    config = DataNodeConfig(parser.parse_args())
-
-    try:
-        dn = DataNode(config)
-        dn.init()
-        dn.finalize()
-    except KeyboardInterrupt:
-        logging.info("Finalizing DataNode...")
-        dn.finalize()
-    except Exception:
-        logging.error("Fatal Error!!")
-        raise
+        try:
+            dn = DataNode(config)
+            dn.init()
+            dn.finalize()
+        except KeyboardInterrupt:
+            logging.info("Finalizing DataNode...")
+            dn.finalize()
+        except Exception:
+            logging.error("Fatal Error!!")
+            raise

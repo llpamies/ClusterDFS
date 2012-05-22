@@ -5,6 +5,8 @@ import logging
 import argparse
 import socket
 import collections
+
+from headers import *
 from networking import *
 
 class NameNodeConfig(object):
@@ -13,10 +15,6 @@ class NameNodeConfig(object):
     def __init__(self, args):
         for k, v in args.__dict__.iteritems():
             if v!=None: self.__dict__[k] = v
-
-class NameNodeHeader:
-    OP_PING = 0
-    OP_GETNODES = 1
 
 class NameNodeQuery(ServerHandle):
     def get_address(self):  
