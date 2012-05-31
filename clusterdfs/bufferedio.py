@@ -58,7 +58,7 @@ class DelayedReusableIOBuffer(IOBuffer):
             self.iobuffer.reset()
 
     def __getattr__(self, attribute):
-	    return getattr(self.iobuffer, attribute)
+        return getattr(self.iobuffer, attribute)
 
 @ClassLogger
 class InputStreamReader(object):
@@ -80,6 +80,8 @@ class InputStreamReader(object):
         for i in xrange(num_buffers):
             self.free_queue.put(ReusableIOBuffer(self.free_queue))
 
+        self.finalized = False
+
     def _run(self):
         try:
             read = 0
@@ -99,6 +101,7 @@ class InputStreamReader(object):
         
         finally:
             self.busy_queue.put(StopIteration)
+            self.finalized = True
 
     def __iter__(self):
         for iobuffer in self.busy_queue:
@@ -116,16 +119,18 @@ class OutputStreamWriter(object):
         self.exc_info = None
         self.queues = [gevent.queue.Queue() for i in xrange(self.num_outputs)]
         self.processes = [gevent.spawn(self._run, *x) for x in itertools.izip(self.output_streams, self.queues)]
-        self.dead = False
+        self.finalizing = False
+        self.finalized = False
 
-    def stop(self):
+    def finalize(self):
+        self.finalizing = True
         for queue in self.queues:
             queue.put(StopIteration)
 
     def write(self, iobuffer):
         if __debug__: self.logger.debug('Received a buffer to write.')
-        if self.dead:
-            raise IOError('Some consumer processes finished.')
+        if self.finalized or self.finalizing:
+            raise IOError('Internal writer process finished.')
         for queue in self.queues:
             queue.put(DelayedReusableIOBuffer(iobuffer, self.num_outputs))
 
@@ -146,11 +151,10 @@ class OutputStreamWriter(object):
                 return False
 
         finally:
-            self.dead = True
+            self.finalized = True
 
     def join(self):
         for process, queue in itertools.izip(self.processes, self.queues):
-            queue.put(StopIteration)
             if process.get():
                 raise self.exc_info[1], None, self.exc_info[2]
 
@@ -236,9 +240,6 @@ class NetworkInputStream(InputStream):
         read = 0
         while read<nbytes:
             read += self.endpoint.recv_into(iobuffer.mem[read:nbytes])
-        
-        if read<=0:
-            raise IOError("Socket disconnected.")
         
         iobuffer.length = read
         return read

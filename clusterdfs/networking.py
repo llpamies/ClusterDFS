@@ -1,6 +1,7 @@
 import sys
 import struct
 import cPickle
+import cStringIO
 import logging
 import commands
 import socket
@@ -40,31 +41,57 @@ class NetworkEndpoint(object):
         self.reading_stream = None
         self.output_stream = NetworkOutputStream(self)
 
+        '''
+            The sendall socket mehtod can only be used in blocking (timeout==None) sockets.
+        '''
+        if self.socket.gettimeout()==None:
+            if __debug__: self.logger.debug("Using '_send_bytes_sendall' function.")
+            self._send_bytes = self._send_bytes_sendall
+        else:
+            if __debug__: self.logger.debug("Using '_send_bytes_iter' function.")
+            self._send_bytes = self._send_bytes_iter
+
+        self._streamed = 0
+
     def new_writer(self):
         return OutputStreamWriter(self.output_stream)
 
     def _get_header(self):
-        raw_data = self.socket.recv(5)
-        if len(raw_data)!=5:
-            raise IOError("Connection lost receiving header: got %d bytes."%len(raw_data))
-        a= struct.unpack('<BI', raw_data)
-        return a
+        raw_data = self._recv_bytes(5)
+        return struct.unpack('<BI', raw_data)
+
+    def _send_header(self, header_type, len_packet):
+        data = struct.pack('<BI', header_type, len_packet)
+        self._send_bytes(data)
+    
+    def _send_bytes_sendall(self, data):
+        self.socket.sendall(data)
+
+    def _send_bytes_iter(self, data):
+        total = len(data)
+        sent = 0
+        while sent<total:
+            sent += self.socket.send(data[sent:])
+        if __debug__: self.logger.debug("Sent %d bytes."%(sent)) 
 
     def _recv_error(self, error_len):
-        raw_data = ''
-        new_len = 0
-        while new_len<error_len:
-            old_len = new_len
-            raw_data += self.socket.recv(error_len-len(raw_data))
-            new_len = len(raw_data)
-            if new_len-old_len==0:
-                raise IOError("Connection reset.")
-        assert new_len==error_len
+        raw_data = self._recv_bytes(error_len)
         error = cPickle.loads(raw_data)
         assert isinstance(error, Exception)
         if __debug__: self.logger.debug("Received NetworkException.") 
         raise error
 
+    def _recv_bytes(self, num_bytes):
+        data = ''
+        old_len = 0
+        while len(data)<num_bytes:
+            data += self.socket.recv(num_bytes-old_len)
+            new_len = len(data)
+            if new_len==old_len:
+                raise IOError("Connection lost while receiving bytes.")
+            old_len = new_len
+        assert len(data)==num_bytes
+        return data
 
     def recv(self):
         try:
@@ -79,13 +106,14 @@ class NetworkEndpoint(object):
                 self._recv_error(data_len)
 
             elif packet_type==NetworkHeader.VALUE:
-                raw_data = self.socket.recv(data_len)
+                raw_data = self._recv_bytes(data_len)
                 assert len(raw_data)==data_len, (len(raw_data),data_len)
                 if __debug__: self.logger.debug("Received python value.") 
                 return cPickle.loads(raw_data)
             
             elif packet_type==NetworkHeader.STREAM:
                 if __debug__: self.logger.debug("Received stream (%d bytes).", data_len)
+                self._streamed = 0
                 return NetworkInputStream(self, data_len)
 
             else:
@@ -100,7 +128,9 @@ class NetworkEndpoint(object):
             packet_type, data_len = self._get_header()
 
             if packet_type==NetworkHeader.ERROR:
+                #It raises an exception
                 self._recv_error(data_len)
+                assert False, 'Exception should be raised.'
             
             elif packet_type==NetworkHeader.BUFFER:
                 if len(memview)<data_len:
@@ -112,13 +142,16 @@ class NetworkEndpoint(object):
                         raise IOError("Connection reset.")
                     received += new_recv 
                 assert received==data_len, (received, data_len)
+                self._streamed += received
                 if __debug__: self.logger.debug("Received buffer (%d bytes).", data_len)
                 return received
 
             elif packet_type==NetworkHeader.VALUE:
-                raise ValueError("Cannot parse VALUE from recv_from.")
+                if __debug__: self.logger.debug("Invalid VALUE header after receiving %d streamed bytes."%(self._streamed))
+                raise ValueError("Cannot parse VALUE from recv_into.")
 
             else:
+                if __debug__: self.logger.debug("Unknown header after receiving %d streamed bytes."%(self._streamed))
                 raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
 
         except:
@@ -129,23 +162,23 @@ class NetworkEndpoint(object):
         if isinstance(obj, NetworkException):
             if __debug__: self.logger.debug('Sending exception')
             data = cPickle.dumps(obj)
-            self.socket.sendall(struct.pack('<BI', NetworkHeader.ERROR, len(data)))
-            self.socket.sendall(data)
+            self._send_header(NetworkHeader.ERROR, len(data))
+            self._send_bytes(data)
 
         elif isinstance(obj, IOBuffer):
             if __debug__: self.logger.debug('Sending buffer')
-            self.socket.sendall(struct.pack('<BI', NetworkHeader.BUFFER, obj.length))
-            self.socket.sendall(obj.data())
+            self._send_header(NetworkHeader.BUFFER, obj.length)
+            self._send_bytes(obj.data())
 
         elif isinstance(obj, InputStream):
             if __debug__: self.logger.debug('Sending stream')
-            self.socket.sendall(struct.pack('<BI', NetworkHeader.STREAM, obj.size))
+            self._send_header(NetworkHeader.STREAM, obj.size)
 
         else: #py obj
             if __debug__: self.logger.debug('Sending object')
             data = cPickle.dumps(obj)
-            self.socket.sendall(struct.pack('<BI', NetworkHeader.VALUE, len(data)))
-            self.socket.sendall(data)
+            self._send_header(NetworkHeader.VALUE, len(data))
+            self._send_bytes(data)
 
     def local_address(self):
         return commands.getoutput("/sbin/ifconfig").split("\n")[1].split()[1][5:]
@@ -154,6 +187,7 @@ class NetworkEndpoint(object):
         self.socket.shutdown(socket.SHUT_WR)
         self.socket.close()
 
+@ClassLogger
 class ServerHandle(NetworkEndpoint):
     def __init__(self, server, socket, address):
         NetworkEndpoint.__init__(self, socket)
@@ -168,16 +202,16 @@ class ServerHandle(NetworkEndpoint):
             response = True
 
         except socket.error as e:
-            logging.error("Failed connection from %s: %s."%(repr(self.address), unicode(e)))
+            self.logger.error("Failed connection from %s: %s."%(repr(self.address), unicode(e)))
             response = None
 
         except NetworkException as e:
-            logging.error("RaisedNetworkException:\n"+unicode(e))
+            self.logger.error("RaisedNetworkException:\n"+unicode(e))
             e.log_forward((socket.gethostname(),self.address[1]))
             self.send(e)
 
         except Exception as e:
-            logging.error("RaisedException:\n"+traceback.format_exc())
+            self.logger.error("RaisedException:\n"+traceback.format_exc())
             e = NetworkException(type(e).__name__+': '+unicode(e))
             e.log_forward((socket.gethostname(),self.address[1]))
             self.send(e)
@@ -191,7 +225,7 @@ class ServerHandle(NetworkEndpoint):
                 pass
 
 class Server(object):
-    def __init__(self, handle_class=ServerHandle, addr='', port=7777, timeout=10):
+    def __init__(self, handle_class=ServerHandle, addr='', port=7777, timeout=None):
         self.server = gevent.server.StreamServer((addr, port), self.handle)
         self.handle_class = handle_class
         self.timeout = timeout
@@ -208,7 +242,7 @@ class Client(NetworkEndpoint):
     def __init__(self, addr, port):
         self.address = (addr, port)
         try:
-            socket = gevent.socket.create_connection(self.address)
+            socket = gevent.socket.create_connection(self.address, None)
         except:
             raise IOError("Cannot connect to "+unicode(self.address))
         NetworkEndpoint.__init__(self, socket)

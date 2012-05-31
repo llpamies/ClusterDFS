@@ -180,12 +180,13 @@ class DataNodeQuery(ServerHandle):
             input_stream = NetCodingInputStream(coding_executor)
             reader = InputStreamReader(input_stream, debug_name='coding_result')
             self.send(input_stream)
+            writer = self.new_writer()
             for iobuffer in reader:
                 if __debug__: self.logger.debug('Sending coded buffer.')
-                writer = self.new_writer()
                 writer.write(iobuffer)
-                if __debug__: self.logger.debug('Waiting for writer to finalize.')
-                writer.join() 
+            if __debug__: self.logger.debug('Waiting for writer to finalize.')
+            writer.finalize()
+            writer.join() 
         else:
             if __debug__: self.logger.debug("Executing locally.")
             coding_executor.execute()
@@ -197,7 +198,7 @@ class DataNodeNotifier(object):
     def __init__(self, config, server):
         self.config = config
         self.server = server
-        #self.process = gevent.spawn(self.timeout)
+        self.process = gevent.spawn(self.timeout)
         self.ping = {'op':NameNodeHeader.OP_PING, 'datanode_port':self.config.port}
 
     def stop(self):

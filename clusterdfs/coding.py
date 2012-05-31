@@ -55,6 +55,9 @@ class NetCodingExecutor(object):
         for stream in self.operations.streams:
             ts = type(stream)
             if ts==tuple:
+                #if stream[0] in self.streams:
+                #    raise CodingException("Duplicate stream name: %s."%(stream[0]))
+
                 if stream[1]=='r':
                     self.streams[stream[0]] = self.block_store.get_input_stream(stream[0])
                     self.readers[stream[0]] = iter(InputStreamReader(self.streams[stream[0]], debug_name=stream[0]))
@@ -91,6 +94,9 @@ class NetCodingExecutor(object):
         
         if __debug__: self.logger.debug('Waiting for writers..')
         for writer in self.writers.itervalues():
+            writer.finalize()
+        
+        for writer in self.writers.itervalues():
             writer.join()
 
         if __debug__: self.logger.debug('Finalizing streams..')
@@ -114,7 +120,12 @@ class NetCodingExecutor(object):
             bytes_processed = dst_buffer.length
 
         elif instruction[0]=='LOAD':
-            self.buffers[instruction[1]] = self.readers[instruction[2]].next()
+            try:
+                iobuffer = next(self.readers[instruction[2]])
+            except StopIteration:
+                raise CodingException("Reader finalized before it was expected!")
+            assert isinstance(iobuffer, IOBuffer)
+            self.buffers[instruction[1]] = iobuffer
             bytes_processed = self.buffers[instruction[1]].length
         
         elif instruction[0]=='WRITE':
@@ -159,10 +170,10 @@ class NetCodingExecutor(object):
             bytes_processed = dst_buffer.length
 
         else:
-            assert False, 'Invalid coding instruction.'
+            raise CodingException('Invalid coding instruction: %s'%(str(instruction)))
 
         if bytes_processed==None:
-            raise CodingException('The number of processed bytes was not set.')
+            raise CodingException('The number of processed bytes was not set for instruction: %s'%(str(instruction)))
 
         return bytes_processed
 
