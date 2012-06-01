@@ -8,7 +8,7 @@ import logging.config
 import operator
 import itertools
 
-from clusterdfs.galoisarray import GaloisArray, inverse_val
+from clusterdfs.galoisbuffer import GaloisBuffer, inverse_val
 from clusterdfs.bufferedio import InputStreamReader
 from clusterdfs.coding import *
 
@@ -17,10 +17,16 @@ logging.config.fileConfig("./bin/datanode_logger.conf")
 def prod(it):
     return reduce(operator.mul, it)
 
+types = {8: numpy.uint8, 16: numpy.uint16, 32: numpy.uint32}
+
 class Test(object):
-    def __init__(self, n, k):
+    def __init__(self, n, k, bitfield=16):
         self.k = k
         self.n = n
+        self.bitfield = bitfield
+
+        if bitfield not in [8,16,32]:
+            raise ValueError("bitfield should be 8, 16 or 32")
 
         # initial replicas
         self.replicas = [[] for i in xrange(self.n)]
@@ -32,8 +38,8 @@ class Test(object):
             self.remove[self.n-self.k+i].append(i)
 
         # create and initialize the coefficients of parts
-        self.parts = [numpy.zeros(k, dtype=numpy.uint16) for i in xrange(self.k)]
-        self.parts_galois = [GaloisArray(k, buffer=p.data, bitfield=16) for p in self.parts]
+        self.parts = [numpy.zeros(k, dtype=types[self.bitfield]) for i in xrange(self.k)]
+        self.parts_galois = [GaloisBuffer(k*self.bitfield/8, buffer=p.data, bitfield=self.bitfield) for p in self.parts]
         for i,p in enumerate(self.parts):
             p[i] = 1
 
@@ -43,8 +49,10 @@ class Test(object):
         self.stream_coeff_i = iter(self.stream_coeff)
         self.local_coeff_i = iter(self.local_coeff)
 
-    def get_coefficient(self, maxv=2**16-1):
-        return random.randrange(1,maxv)
+    def get_coefficient(self):
+        v = random.randrange(1, 1<<self.bitfield)
+        assert v!=0
+        return v
 
     def get_node_addr(self, i):
         return ('thinclient-%02d'%(i),7777)
@@ -59,8 +67,8 @@ class Test(object):
         return 'decoded%d'%(i)
 
     def coding(self):
-        stream = numpy.zeros(self.k, dtype=numpy.uint16)
-        stream_galois = GaloisArray(self.k, buffer=stream.data, bitfield=16)
+        stream = numpy.zeros(self.k, dtype=types[self.bitfield])
+        stream_galois = GaloisBuffer(self.k*self.bitfield/8, buffer=stream.data, bitfield=self.bitfield)
 
         nodes = []
         polys = []
@@ -111,8 +119,8 @@ class Test(object):
         return nodes, polys
 
     def decoding(self):
-        stream = numpy.zeros(self.k, dtype=numpy.uint16)
-        stream_galois = GaloisArray(self.k, buffer=stream.data, bitfield=16)
+        stream = numpy.zeros(self.k, dtype=types[self.bitfield])
+        stream_galois = GaloisBuffer(self.k*self.bitfield/8, buffer=stream.data, bitfield=self.bitfield)
 
         coding_nodes, polys = self.coding()
 
@@ -130,15 +138,15 @@ class Test(object):
             new = NetCodingOperations(self.get_node_addr(i), buffers, 'output' if i!=self.k-1 else None)
             new.add('LOAD', 'input', prev_node)
             new.add('LOAD', 'buff', self.get_coded_uri(i))
-            new.add('MULADD', 'output', inverse_val(int(polys[i][i])), 'buff')
-            new.add('MULADD', 'output', inverse_val(int(polys[i][i-1])), 'input')
+            new.add('MULADD', 'output', inverse_val(int(polys[i][i]), bitfield=self.bitfield), 'buff')
+            new.add('MULADD', 'output', inverse_val(int(polys[i][i-1]), bitfield=self.bitfield), 'input')
             new.add('WRITE', 'output', self.get_decoded_uri(i))
             nodes.append(new)
         
         return nodes
 
 numpy.set_printoptions(linewidth=150)
-t = Test(16, 11)
+t = Test(16, 11, bitfield=8)
 nodes, polys = t.coding()
 for node,poly in itertools.izip(nodes, polys):
     for i in node.instructions:

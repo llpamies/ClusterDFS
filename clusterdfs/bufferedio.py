@@ -111,6 +111,12 @@ class InputStreamReader(object):
         if self.process.get():
             raise self.exc_info[1], None, self.exc_info[2]
 
+    def flush(self, writer):
+        if not isinstance(writer, OutputStreamWriter):
+            raise TypeError("Should be an OutputStreamWriter.")
+        for iobuffer in self:
+            writer.write(iobuffer)
+
 @ClassLogger
 class OutputStreamWriter(object):
     def __init__(self, *output_streams):

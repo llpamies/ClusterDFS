@@ -67,110 +67,52 @@ class DataNodeQuery(ServerHandle):
             assert False
     
     def store_block(self):
-        # Read block properties
         block_id = self.header['id']
-        block_size = self.header['length']
-        logging.info("Receiving block '%s' (%d bytes) from %s.", block_id, block_size, self.address)
 
-        # Check headers
-        if block_size<=0:
-            return NetworkHeader.error(msg='Block size has to be larger than zero.')
+        reader = self.get_reader()
 
-        # Get the forward list and the next forward node
         if 'fwdlist' in self.header:
+            # Get the forward list and the next forward node
             forward_list = self.header['fwdlist']
             logging.info("Forwarding '%s' to %s.", block_id, repr(forward_list[0]))
             logging.info("Remaining forwards: %d.", len(forward_list)-1)
             next_node = Client(*forward_list[0])
             next_forward_list = forward_list[1:]
-        else:
-            next_node = None
-            next_forward_list = []
-
-        block_input_stream = None
-        local_block_output_stream = None
-
-        try:
-            # prepare streams...
-            block_input_stream = SocketInputStream(self.socket, block_size)
-            local_block_output_stream = self.server.block_store.get_output_stream(block_id)
-
-            if next_node:
-                # Send header to next node
-                header = self.header.copy()
-                header['fwdlist'] = next_forward_list
-                next_node.send(header)
-            
-                # Prepare stream
-                next_node_output_stream = SocketOutputStream(next_node.socket)
                 
-                # store and send to next node
-                reader = InputStreamReader(block_input_data)
-                writer = OutputStreamWriter(local_block_output_stream, next_node_output_stream)
-                reader.read_into(writer)
+            # Send header to next node
+            header = self.header.copy()
+            header['fwdlist'] = next_forward_list
+            next_node.send(header)
             
-                # Receive response from next_node
-                response = next_node.recv()
-                if response['code']==NetworkHeader.OK:
-                    logging.info("Block '%s' (%d bytes) stored & forwarded successfully."%(block_id, block_size))
-                    return NetworkHeader.ok(msg='Block stored & forwarded successfully.')
-                else:
-                    return response
+            # processing
+            writer = OutputStreamWriter(self.server.block_store.get_output_stream(block_id), next_node.output_stream)
+            reader.flush(writer)
+            writer.finalize()
+            writer.join()
+            next_node.assert_ack()
 
-            else:
-                # store only
-                reader = InputStreamReader(block_input_data)
-                writer = OutputStreamWriter(local_block_output_stream)
-                reader.read_into(writer)
-            
-                logging.info("Block '%s' (%d bytes) stored successfully."%(block_id, block_size))
-                return NetworkHeader.ok(msg='Block stored successfully.')
-
-        except IOError:
-            logging.info("Transmission from %s failed.", self.address)
-            return NetworkHeader.error(msg='Transmission failed.')
-
-        finally:
-            # Release sockets and close files
-            if next_node:
-                next_node.kill() # there is no need to close output_stream since endpoint does it.
-            if local_block_output_stream:
-                local_block_output_stream.close()
+        else:
+            # processing
+            writer = OutputStreamWriter(self.server.block_store.get_output_stream(block_id))
+            reader.flush(writer)
+            writer.finalize()
+            writer.join()
+        
+        logging.info("Block '%s' stored successfully.", block_id)
 
     def retrieve_block(self):
-        # Read block properties
         block_id = self.header['id']
-        block_size = self.server.block_store.get_size(block_id)
-        block_offset = self.header['offset'] if ('offset' in self.header) else 0
-        block_length = self.header['length'] if ('length' in self.header) else block_size
-
-        # Do error control
-        if block_length+block_offset > block_size:
-            return NetworkHeader.error(msg='The requested data is larger than block_size.')
-
-        self.logger.info("Sending block '%s' (%d bytes, %d offset) to %s."%(block_id, block_length, block_offset, self.address))
-
-        try:
-            # Send response
-            self.send_response(NetworkHeader.response(length=block_length))
-            
-            # Send block data
-            block_finput_stream = self.server.block_store.get_input_stream(block_id)
-            local_block_output_stream = SocketOutputStream(self.socket)
-            reader = InputStreamReader(block_finput_stream)
-            writer = OutputStreamWriter(local_block_output_stream)
-            reader.read_into(writer)
-
-        except IOError:
-            self.logger.error("Transmission from %s failed.", self.address)
-            return NetworkHeader.error(msg='Transmission failed.')
-        
-        finally:
-            # there is no need to close output_stream since endpoint does it.
-            block_finput_stream.close()
+        self.logger.info("Sending block '%s'.", block_id)
+        input_stream = self.block_store.get_input_stream(block_id)
+        reader = InputStreamReader(input_stream, debug_name='retrieve')
+        writer = self.new_writer()
+        reader.flush(writer)
+        writer.finalize()
+        writer.join()
+        self.logger.info('Block %s sent successfully.', block_id)
 
     def node_coding(self):
-        self.logger.debug("Starting coding operation.")
+        self.logger.info("Starting coding operation.")
 
         coding_operations = NetCodingOperations.unserialize(self.header['coding'])
         coding_executor = NetCodingExecutor(coding_operations, self.server.block_store)
@@ -181,17 +123,14 @@ class DataNodeQuery(ServerHandle):
             reader = InputStreamReader(input_stream, debug_name='coding_result')
             self.send(input_stream)
             writer = self.new_writer()
-            for iobuffer in reader:
-                if __debug__: self.logger.debug('Sending coded buffer.')
-                writer.write(iobuffer)
-            if __debug__: self.logger.debug('Waiting for writer to finalize.')
+            reader.flush(writer)
             writer.finalize()
             writer.join() 
         else:
             if __debug__: self.logger.debug("Executing locally.")
             coding_executor.execute()
 
-        self.logger.debug('Coding finalized successfully.')
+        self.logger.info('Coding finalized successfully.')
 
 @ClassLogger
 class DataNodeNotifier(object):

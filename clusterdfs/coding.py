@@ -10,9 +10,11 @@ from common import *
 from headers import *
 from bufferedio import *
 from networking import Client
-from galoisarray import GaloisArray
+from galoisbuffer import GaloisBuffer
 
 #coding = sys.modules[__name__]
+
+bitfield_op = 8
 
 class CodingException(Exception):
     pass
@@ -23,18 +25,9 @@ class RemoteNetCoding(Client):
         self.header = {'op':DataNodeHeader.OP_CODING, 'coding':operations.serialize()}
         super(RemoteNetCoding, self).__init__(*operations.node_address)
 
-    def get_stream(self):
-        self.send(self.header)
-        stream = self.recv()
-        if not isinstance(stream, InputStream):
-            raise TypeError("An InputStream was expected.")
-        return stream
-
     def execute(self):
         self.send(self.header)
-        ack = self.recv()
-        if type(ack)!=bool or (not ack):
-            raise CodingException("Failed to receive remote coding ACK.")
+        self.assert_ack()
 
 @ClassLogger
 class NetCodingExecutor(object):
@@ -146,9 +139,11 @@ class NetCodingExecutor(object):
                 self.logger.error('Buffer sizes are not aligned.')
                 raise CodingException('Buffers sizes are not aligned.')
 
-            src = GaloisArray(src_buffer.size/2, bitfield=16, buffer=src_buffer.buff)
-            dst = GaloisArray(dst_buffer.size/2, bitfield=16, buffer=dst_buffer.buff)
-            src.multadd(literal_value, dst, add=True)
+            src = GaloisBuffer(src_buffer.size, bitfield=bitfield_op, buffer=src_buffer.buff)
+            dst = GaloisBuffer(dst_buffer.size, bitfield=bitfield_op, buffer=dst_buffer.buff)
+            if __debug__: self.logger.debug('starting op')
+            src.multadd(literal_value, dest=dst, add=True)
+            if __debug__: self.logger.debug('finished op')
             dst_buffer.length = src_buffer.length
             bytes_processed = dst_buffer.length
 
@@ -163,9 +158,11 @@ class NetCodingExecutor(object):
                 self.logger.error('Buffer sizes are not aligned.')
                 raise CodingException('Buffer sizes are not aligned.')
 
-            src = GaloisArray(src_buffer.size/2, bitfield=16, buffer=src_buffer.buff)
-            dst = GaloisArray(dst_buffer.size/2, bitfield=16, buffer=dst_buffer.buff)
-            src.multadd(literal_value, dst, add=False)
+            src = GaloisBuffer(src_buffer.size, bitfield=bitfield_op, buffer=src_buffer.buff)
+            dst = GaloisBuffer(dst_buffer.size, bitfield=bitfield_op, buffer=dst_buffer.buff)
+            if __debug__: self.logger.debug('starting op')
+            src.multadd(literal_value, dest=dst, add=False)
+            if __debug__: self.logger.debug('finished op')
             dst_buffer.length = src_buffer.length
             bytes_processed = dst_buffer.length
 

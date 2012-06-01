@@ -53,6 +53,16 @@ class NetworkEndpoint(object):
 
         self._streamed = 0
 
+    def get_stream(self):
+        self.send(self.header)
+        stream = self.recv()
+        if not isinstance(stream, InputStream):
+            raise TypeError("An InputStream was expected.")
+        return stream
+
+    def get_reader(self):
+        return InputStreamReader(self.get_stream())
+
     def new_writer(self):
         return OutputStreamWriter(self.output_stream)
 
@@ -242,7 +252,12 @@ class Client(NetworkEndpoint):
     def __init__(self, addr, port):
         self.address = (addr, port)
         try:
-            socket = gevent.socket.create_connection(self.address, None)
+            socket = gevent.socket.create_connection(self.address, timeout=None)
         except:
             raise IOError("Cannot connect to "+unicode(self.address))
         NetworkEndpoint.__init__(self, socket)
+ 
+    def assert_ack(self):
+        ack = self.recv()
+        if type(ack)!=bool or (not ack):
+            raise CodingException("Failed to receive remote ACK.")
