@@ -1,0 +1,35 @@
+Jerasure - A python wrapper for Jerasure Library.
+Copright (C) 2012 Lluis Pamies-Juarez <lluis@pamies.cat>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+COMPILE:
+    python setup.py build
+
+JERASURE LIBRARY:
+    galois.c
+    galois.h
+    jerasure.c
+    jerasure.h
+    jerasure.pxd  --> needed by cython
+
+CAUCHY REED-SOLOMON CODE:
+    cauchyec.pyx --> cython code
+
+GALOIS BUFFER
+    galoisbuffer.pyx --> Filed operations in the buffer.
+
+CODING/DECODING TEST:
+    print.py --> Simple verbose example
+    test.py --> Performance eval example for different w values.

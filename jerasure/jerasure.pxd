@@ -1,3 +1,28 @@
+'''
+CauchyEC - A python wrapper for Cauchy Reed-Solomon codes from Jerasure Library.
+Copright (C) 2012 Lluis Pamies-Juarez <lluis@pamies.cat>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+'''
+
+cdef extern from "cauchy.h":
+    extern int *cauchy_original_coding_matrix(int k, int m, int w)
+    extern int *cauchy_xy_coding_matrix(int k, int m, int w, int *x, int *y)
+    extern void cauchy_improve_coding_matrix(int k, int m, int w, int *matrix)
+    extern int *cauchy_good_general_coding_matrix(int k, int m, int w)
+    extern int cauchy_n_ones(int n, int w)
+
 cdef extern from "galois.h":
     extern int galois_single_multiply(int a, int b, int w)
     extern int galois_single_divide(int a, int b, int w)
