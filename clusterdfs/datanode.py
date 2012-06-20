@@ -43,11 +43,11 @@ class DataNodeHeader(object):
         return writer.getvalue() 
               
 class DataNodeConfig(object):
-    port = 7777
+    port = 13100
     bind_addr = '0.0.0.0'
     datadir = None
     namenode_addr = 'localhost'
-    namenode_port = 7770
+    namenode_port = 13200
     ping_timeout = 10
     isolated = False
 
