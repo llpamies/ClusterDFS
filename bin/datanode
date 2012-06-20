@@ -27,7 +27,7 @@ if __name__ == '__main__':
         parser.add_argument('-na', action="store", default='localhost', dest="namenode_addr", type=str, help="Address of the NameNode.")
         parser.add_argument('-np', action="store", default=7770, dest="namenode_port", type=int, help="Port of the NameNode.")
         parser.add_argument('-i', action="store", default=False, dest="isolated", type=bool, help="Should the data node work without namenode.")
-        config = DataNodeConfig(parser.parse_args())
+        config = DataNodeConfig.from_args(parser.parse_args())
 
         try:
             dn = DataNode(config)

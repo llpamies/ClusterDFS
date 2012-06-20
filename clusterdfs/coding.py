@@ -19,15 +19,27 @@ bitfield_op = 8
 class CodingException(Exception):
     pass
 
+class TemporalBufferQueue(gevent.queue.Queue):
+    queues = {}
+
+    def __init__(self, name, *args, **kwargs):
+        super(TemporalBufferQueue, self).__init__(*args, **kwargs)
+        TemporalBufferQueue.queues[name] = self
+        
+    @staticmethod
+    def get_temp(name):
+        return TemporalBufferQueue.queues[name]
+
+    @staticmethod
+    def delete_temp(name):
+        TemporalBufferQueue.pop(name)
+
 @ClassLogger
 class RemoteNetCoding(Client):
     def __init__(self, operations):
         self.header = {'op':DataNodeHeader.OP_CODING, 'coding':operations.serialize()}
         super(RemoteNetCoding, self).__init__(*operations.node_address)
-
-    def execute(self):
         self.send(self.header)
-        self.assert_ack()
 
 @ClassLogger
 class NetCodingExecutor(object):
@@ -45,7 +57,9 @@ class NetCodingExecutor(object):
         self.non_disposable_buffers = set()
         self.size = None
 
+        if __debug__: self.logger.debug('Processing streams...')
         for stream in self.operations.streams:
+            if __debug__: self.logger.debug('Processing stream: %s.',unicode(stream))
             ts = type(stream)
             if ts==tuple:
                 #if stream[0] in self.streams:
@@ -53,7 +67,7 @@ class NetCodingExecutor(object):
 
                 if stream[1]=='r':
                     self.streams[stream[0]] = self.block_store.get_input_stream(stream[0])
-                    self.readers[stream[0]] = iter(InputStreamReader(self.streams[stream[0]], debug_name=stream[0]))
+                    self.readers[stream[0]] = iter(InputStreamReader(self.streams[stream[0]], debug_name=stream[0], num_buffers=2))
                     if self.size==None:
                         self.size = self.streams[stream[0]].size
                         
@@ -69,8 +83,8 @@ class NetCodingExecutor(object):
 
             elif ts==NetCodingOperations:
                 remote_coding = RemoteNetCoding(stream)
-                self.streams[stream] = remote_coding.get_stream()
-                self.readers[stream] = iter(InputStreamReader(self.streams[stream], debug_name=stream))
+                self.streams[stream] = remote_coding.recv_stream()
+                self.readers[stream] = iter(InputStreamReader(self.streams[stream], debug_name=stream, num_buffers=2))
                 self.clients[stream] = remote_coding
 
                 if self.size==None:
@@ -81,10 +95,15 @@ class NetCodingExecutor(object):
 
             else:
                 raise TypeError('Invalid operation stream. Found "%s" and should be a (str,str)-tuple or NetCodingOperations instance)'%str(stream))
+        if __debug__: self.logger.debug('Processing streams finished.')
 
     def finalize(self):
         if __debug__: self.logger.debug('Finalizing coding...')
         
+        if __debug__: self.logger.debug('Killing clients..')
+        for client in self.clients.itervalues():
+            client.assert_ack()
+
         if __debug__: self.logger.debug('Waiting for writers..')
         for writer in self.writers.itervalues():
             writer.finalize()
@@ -97,10 +116,6 @@ class NetCodingExecutor(object):
             self.logger.debug(stream)
             stream.finalize()
 
-        if __debug__: self.logger.debug('Killing clients..')
-        for client in self.clients.itervalues():
-            client.kill()
-        
     def execute_instruction(self, instruction):
         if __debug__: self.logger.debug('NetCodingInputStream is processing instruction %s', str(instruction))
        
@@ -111,6 +126,14 @@ class NetCodingExecutor(object):
             src_buffer = self.buffers[instruction[2]]
             src_buffer.copy_to(dst_buffer)
             bytes_processed = dst_buffer.length
+
+        elif instruction[0]=='QUEUE':
+            queue = TemporalBufferQueue.get_temp(instruction[1])
+            queue.put(self.buffers[instruction[2]])
+
+        elif instruction[0]=='DEQUEUE':
+            queue = TemporalBufferQueue.get_temp(instruction[1])
+            self.buffers[instruction[2]] = queue.get()
 
         elif instruction[0]=='LOAD':
             try:
@@ -207,7 +230,6 @@ class NetCodingExecutor(object):
         while read<self.size:
             if __debug__: self.logger.debug('execute iter %d/%d', read, self.size)
             read += self.execute_step()
-        self.finalize()
 
 @ClassLogger
 class NetCodingInputStream(InputStream):
@@ -255,3 +277,6 @@ class NetCodingOperations(object):
         op = NetCodingOperations(node_address, [block_id], 'buff')
         op.add('READ', 'buff', block_id)
         return op
+
+    def __str__(self):
+        return unicode(self.node_address) + ' ' + unicode(self.streams)

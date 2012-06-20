@@ -1,33 +1,80 @@
-import io
-import os
-import os.path
-import errno
-import socket
-import logging
+import avro.io
+import avro.schema
 import tempfile
-import argparse
 
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+  
 from coding import *
 from headers import *
 from networking import *
 from bufferedio import *
 
+class DataNodeHeader(object):
+    # Available 'op' codes:
+    OP_STORE = 0
+    OP_RETRIEVE = 1
+    OP_CODING = 2
+            
+    schema = avro.schema.parse("""\
+                    {"type": "record",
+                     "name": "DataNodeHeader",
+                     "fields": [{"name": "op", "type": "int"},\
+                                {"name": "id", "type": "string"}]\
+                     }""")
+  
+    @staticmethod
+    def parse(s):
+        if not isinstance(s, str):
+            raise TypeError("must be a string")
+        reader = StringIO(s)
+        decoder = avro.io.BinaryDecoder(reader)
+        datum_reader = avro.io.DatumReader(writers_schema=DataNodeHeader.schema, readers_schema=DataNodeHeader.schema)
+        return datum_reader.read(decoder)
+    
+    @staticmethod
+    def generate(op, id_):
+        writer = StringIO()
+        encoder = avro.io.BinaryEncoder(writer)
+        datum_writer = avro.io.DatumWriter(writers_schema=DataNodeHeader.schema)
+        datum_writer.write({'op':op,'id':id_}, encoder)
+        return writer.getvalue() 
+              
 class DataNodeConfig(object):
     port = 7777
     bind_addr = '0.0.0.0'
-    datadir = tempfile.mkdtemp()
+    datadir = None
     namenode_addr = 'localhost'
     namenode_port = 7770
     ping_timeout = 10
     isolated = False
 
-    def __init__(self, args):
+    def __init__(self):
+        pass
+        
+    @classmethod
+    def from_args(cls, args):
+        c = cls()   
         for k, v in args.__dict__.iteritems():
-            if v!=None: self.__dict__[k] = v
+            if v!=None: c.__dict__[k] = v
+        return c.check()
+    
+    @classmethod
+    def from_dict(cls, d):
+        c = cls()
+        for k, v in d.iteritems():
+            if v!=None: c.__dict__[k] = v
+        return c.check()
 
+    def check(self):
+        if self.datadir==None:
+            self.datadir = tempfile.mkdtemp()
         if not self.datadir.endswith('/'):
             self.datadir = self.datadir+'/'
-
+        return self
+        
 class BlockStoreManager(object):
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -35,6 +82,9 @@ class BlockStoreManager(object):
     def path(self, block_id):
         return os.path.join(self.data_dir, block_id)
 
+    def fake_path(self, block_id):
+        return "/dev/null"
+    
     def get_size(self, block_id):
         return os.path.getsize(self.path(block_id))
 
@@ -48,28 +98,29 @@ class BlockStoreManager(object):
         '''
             Returns a FileOutputStream for the block with block_id.
         '''
-        return FileOutputStream(self.path(block_id))
+        return FileOutputStream(self.fake_path(block_id))
+        #return FileOutputStream(self.path(block_id))
 
 
 @ClassLogger
 class DataNodeQuery(ServerHandle):
     def process_query(self):
-        if self.header['op']==DataNodeHeader.OP_STORE:
-            return self.store_block()
+        header = DataNodeHeader.parse(self.recv()) 
         
-        elif self.header['op']==DataNodeHeader.OP_RETRIEVE:
-            return self.retrieve_block()
+        if header['op']==DataNodeHeader.OP_STORE:
+            return self.store_block(header['id'])
         
-        elif self.header['op']==DataNodeHeader.OP_CODING:
-            return self.node_coding()
+        elif header['op']==DataNodeHeader.OP_RETRIEVE:
+            return self.retrieve_block(header['id'])
+        
+        elif header['op']==DataNodeHeader.OP_CODING:
+            return self.node_coding(header['id']) #FIXME
         
         else:
             assert False
     
-    def store_block(self):
-        block_id = self.header['id']
-
-        reader = self.get_reader()
+    def store_block(self, block_id):
+        reader = self.recv_reader()
 
         if 'fwdlist' in self.header:
             # Get the forward list and the next forward node
@@ -100,10 +151,10 @@ class DataNodeQuery(ServerHandle):
         
         logging.info("Block '%s' stored successfully.", block_id)
 
-    def retrieve_block(self):
-        block_id = self.header['id']
+    def retrieve_block(self, block_id):
         self.logger.info("Sending block '%s'.", block_id)
-        input_stream = self.block_store.get_input_stream(block_id)
+        input_stream = self.server.block_store.get_input_stream(block_id)
+        self.send(input_stream)
         reader = InputStreamReader(input_stream, debug_name='retrieve')
         writer = self.new_writer()
         reader.flush(writer)
@@ -111,26 +162,29 @@ class DataNodeQuery(ServerHandle):
         writer.join()
         self.logger.info('Block %s sent successfully.', block_id)
 
-    def node_coding(self):
-        self.logger.info("Starting coding operation.")
+    def node_coding(self, block_id):
+        coding_executor = None
+        try:
+            self.logger.info("Starting coding operation.")
+            coding_operations = NetCodingOperations.unserialize(self.header['coding'])
+            coding_executor = NetCodingExecutor(coding_operations, self.server.block_store)
+        
+            if coding_operations.is_stream():
+                self.logger.debug("Forwarding coding stream.")
+                input_stream = NetCodingInputStream(coding_executor)
+                reader = InputStreamReader(input_stream, debug_name='coding_result')
+                self.send(input_stream)
+                writer = self.new_writer()
+                reader.flush(writer)
+                writer.finalize()
+                writer.join()
+            else:
+                if __debug__: self.logger.debug("Executing locally.")
+                coding_executor.execute()
+            self.logger.info('Coding finalized successfully.')
 
-        coding_operations = NetCodingOperations.unserialize(self.header['coding'])
-        coding_executor = NetCodingExecutor(coding_operations, self.server.block_store)
-    
-        if coding_operations.is_stream():
-            self.logger.debug("Forwarding coding stream.")
-            input_stream = NetCodingInputStream(coding_executor)
-            reader = InputStreamReader(input_stream, debug_name='coding_result')
-            self.send(input_stream)
-            writer = self.new_writer()
-            reader.flush(writer)
-            writer.finalize()
-            writer.join() 
-        else:
-            if __debug__: self.logger.debug("Executing locally.")
-            coding_executor.execute()
-
-        self.logger.info('Coding finalized successfully.')
+        finally:
+            if coding_executor: coding_executor.finalize()
 
 @ClassLogger
 class DataNodeNotifier(object):
@@ -155,7 +209,7 @@ class DataNodeNotifier(object):
                 if response['code']!=NetworkHeader.OK:
                     logging.error('Cannot deliver ping to nameserver: %s', response['msg']) 
 
-            except socket.error, (value,message):
+            except socket.error, (value, message):
                 logging.error("Cannot deliver ping to nameserver: %s."%(message))
             
             # sleep timeout

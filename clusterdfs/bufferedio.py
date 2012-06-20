@@ -32,6 +32,9 @@ class IOBuffer(object):
         iobuffer.length = self.length
         return iobuffer
 
+    def as_numpy_byte_array(self):
+        return numpy.ndarray((self.size,), dtype=numpy.uint8, buffer=self.buff)
+
 @ClassLogger
 class ReusableIOBuffer(IOBuffer):
     def __init__(self, queue, *args, **kwargs):
@@ -165,7 +168,7 @@ class OutputStreamWriter(object):
                 raise self.exc_info[1], None, self.exc_info[2]
 
 class ReadCountMeta(type):
-    def __new__(meta, classname, bases, classdict):
+    def __new__(cls, classname, bases, classdict):
         def new_read(self, *args, **kwargs):
             v = self._original_read(*args, **kwargs)
             self.read_count += v
@@ -177,7 +180,7 @@ class ReadCountMeta(type):
             classdict['_original_read'] = classdict['read']
             classdict['read'] = new_read
 
-        return type.__new__(meta, classname, bases, classdict)
+        return type.__new__(cls, classname, bases, classdict)
 
 @ClassLogger
 class InputStream(object):

@@ -1,10 +1,5 @@
-import sys
 import struct
-import cPickle
-import cStringIO
-import logging
 import commands
-import socket
 import gevent.server
 import gevent.socket
 import traceback
@@ -14,25 +9,40 @@ from bufferedio import *
 
 class NetworkHeader(object):
     ERROR = 1
-    VALUE = 2
-    STREAM = 3
-    BUFFER = 4
+    INTEGER = 2
+    STRING = 3
+    # Each stream is received as a header indicating the total length
+    # and consequent buffers, each of them indicating its length too.
+    STREAM_HEADER = 4  
+    STREAM_BUFFER = 5
 
 class NetworkException(Exception):
-    def __init__(self, message=''):
-        self.message = message
-        type, value, tb = sys.exc_info()
-        self.localtrace = traceback.extract_tb(tb)
-        self.nettrace = []
+    def __init__(self, message=None, trace=None):
+        if message!=None:
+            exc_info = sys.exc_info()
+            self.trace = traceback.format_list(traceback.extract_tb(exc_info[2]))
+            self.trace.append(message)
+            super(NetworkException, self).__init__(self, message)
+        elif trace!=None:
+            self.trace = trace
+            super(NetworkException, self).__init__(self, self.trace[0])
+        else:
+            assert False, "either message or trace must be specified."
     
     def log_forward(self, node):
-        self.nettrace.insert(0, node)
+        self.trace.insert(0, 'dfs://%s:%d'%(node))
+
+    def serialize(self):
+        return '\n'.join(self.trace)
+
+    @classmethod
+    def unserialize(clazz, s):
+        return clazz(trace=s.split('\n'))
 
     def __str__(self):
-        return 'NetworkError:\n  Network flow:\n    '+\
-               '\n    '.join(map(lambda x: 'dfs://%s:%d'%x, self.nettrace))+\
-               '\n' + ''.join(traceback.format_list(self.localtrace))+\
-               self.message
+        return 'NetworkError:\n    '+\
+               '\n    '.join(self.trace[:-1])+\
+               self.trace[-1]
 
 @ClassLogger
 class NetworkEndpoint(object):
@@ -52,26 +62,36 @@ class NetworkEndpoint(object):
             self._send_bytes = self._send_bytes_iter
 
         self._streamed = 0
-
-    def get_stream(self):
-        self.send(self.header)
+        self._to_stream = 0
+    
+    def new_writer(self):
+        return OutputStreamWriter(self.output_stream)
+    
+    def recv_stream(self):
         stream = self.recv()
         if not isinstance(stream, InputStream):
             raise TypeError("An InputStream was expected.")
         return stream
 
-    def get_reader(self):
-        return InputStreamReader(self.get_stream())
+    def recv_reader(self, num_buffers=2):
+        return InputStreamReader(self.recv_stream(), num_buffers=num_buffers)
 
-    def new_writer(self):
-        return OutputStreamWriter(self.output_stream)
-
-    def _get_header(self):
+    def _recv_integer(self):
+        # signed 8 bytes integer
+        return struct.unpack('!q', self._recv_bytes(8)) 
+    
+    def _send_integer(self, integer):
+        # signed 8 bytes integer
+        return self._send_bytes(struct.pack('!q', integer))
+    
+    def _recv_header(self):
         raw_data = self._recv_bytes(5)
-        return struct.unpack('<BI', raw_data)
+        # signed 1 byte integer + signed 4 byte integer
+        return struct.unpack('!bi', raw_data) 
 
-    def _send_header(self, header_type, len_packet):
-        data = struct.pack('<BI', header_type, len_packet)
+    def _send_header(self, header_type, len_packet=0):
+        # signed 1 byte integer + signed 4 byte integer
+        data = struct.pack('!bi', header_type, len_packet)
         self._send_bytes(data)
     
     def _send_bytes_sendall(self, data):
@@ -86,7 +106,7 @@ class NetworkEndpoint(object):
 
     def _recv_error(self, error_len):
         raw_data = self._recv_bytes(error_len)
-        error = cPickle.loads(raw_data)
+        error = NetworkException.unserialize(raw_data)
         assert isinstance(error, Exception)
         if __debug__: self.logger.debug("Received NetworkException.") 
         raise error
@@ -110,20 +130,24 @@ class NetworkEndpoint(object):
                     raise Exception("Cannot receive data from the socket until the stream is processed.")
                 self.reading_stream = None
 
-            packet_type, data_len = self._get_header()
+            packet_type, data_len = self._recv_header()
 
             if packet_type==NetworkHeader.ERROR:
+                if __debug__: self.logger.debug("Received error (%d bytes).", data_len)
                 self._recv_error(data_len)
-
-            elif packet_type==NetworkHeader.VALUE:
-                raw_data = self._recv_bytes(data_len)
-                assert len(raw_data)==data_len, (len(raw_data),data_len)
-                if __debug__: self.logger.debug("Received python value.") 
-                return cPickle.loads(raw_data)
             
-            elif packet_type==NetworkHeader.STREAM:
+            elif packet_type==NetworkHeader.INTEGER:
+                if __debug__: self.logger.debug("Received integer.")
+                return self._recv_integer()
+            
+            elif packet_type==NetworkHeader.STRING:
+                if __debug__: self.logger.debug("Received string (%d bytes).", data_len)
+                return self._recv_bytes(data_len)
+            
+            elif packet_type==NetworkHeader.STREAM_HEADER:
                 if __debug__: self.logger.debug("Received stream (%d bytes).", data_len)
                 self._streamed = 0
+                self._to_stream = data_len
                 return NetworkInputStream(self, data_len)
 
             else:
@@ -135,14 +159,14 @@ class NetworkEndpoint(object):
 
     def recv_into(self, memview):
         try:
-            packet_type, data_len = self._get_header()
+            packet_type, data_len = self._recv_header()
 
             if packet_type==NetworkHeader.ERROR:
                 #It raises an exception
                 self._recv_error(data_len)
                 assert False, 'Exception should be raised.'
             
-            elif packet_type==NetworkHeader.BUFFER:
+            elif packet_type==NetworkHeader.STREAM_BUFFER:
                 if len(memview)<data_len:
                     raise IOError("The memory buffer is too small.")
                 received = 0
@@ -156,12 +180,8 @@ class NetworkEndpoint(object):
                 if __debug__: self.logger.debug("Received buffer (%d bytes).", data_len)
                 return received
 
-            elif packet_type==NetworkHeader.VALUE:
-                if __debug__: self.logger.debug("Invalid VALUE header after receiving %d streamed bytes."%(self._streamed))
-                raise ValueError("Cannot parse VALUE from recv_into.")
-
             else:
-                if __debug__: self.logger.debug("Unknown header after receiving %d streamed bytes."%(self._streamed))
+                if __debug__: self.logger.debug("Invalid header after receiving %d streamed bytes out of %d."%(self._streamed, self._to_stream))
                 raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
 
         except:
@@ -171,24 +191,31 @@ class NetworkEndpoint(object):
     def send(self, obj):
         if isinstance(obj, NetworkException):
             if __debug__: self.logger.debug('Sending exception')
-            data = cPickle.dumps(obj)
+            data = obj.serialize()
             self._send_header(NetworkHeader.ERROR, len(data))
             self._send_bytes(data)
 
         elif isinstance(obj, IOBuffer):
-            if __debug__: self.logger.debug('Sending buffer')
-            self._send_header(NetworkHeader.BUFFER, obj.length)
+            if __debug__: self.logger.debug('Sending stream buffer')
+            self._send_header(NetworkHeader.STREAM_BUFFER, obj.length)
             self._send_bytes(obj.data())
 
         elif isinstance(obj, InputStream):
-            if __debug__: self.logger.debug('Sending stream')
-            self._send_header(NetworkHeader.STREAM, obj.size)
+            if __debug__: self.logger.debug('Sending stream header')
+            self._send_header(NetworkHeader.STREAM_HEADER, obj.size)
 
-        else: #py obj
-            if __debug__: self.logger.debug('Sending object')
-            data = cPickle.dumps(obj)
-            self._send_header(NetworkHeader.VALUE, len(data))
-            self._send_bytes(data)
+        elif isinstance(obj, str):
+            if __debug__: self.logger.debug('Sending string')
+            self._send_header(NetworkHeader.STRING, len(obj))
+            self._send_bytes(obj)
+            
+        elif isinstance(obj, int) or isinstance(obj, long):
+            if __debug__: self.logger.debug('Sending integer')
+            self._send_header(NetworkHeader.INTEGER)
+            self._send_integer(obj)
+        
+        else:
+            raise TypeError('Invalid type.')
 
     def local_address(self):
         return commands.getoutput("/sbin/ifconfig").split("\n")[1].split()[1][5:]
@@ -207,7 +234,6 @@ class ServerHandle(NetworkEndpoint):
     def handle(self):
         response = False
         try:
-            self.header = self.recv()
             self.process_query()
             response = True
 
@@ -260,4 +286,4 @@ class Client(NetworkEndpoint):
     def assert_ack(self):
         ack = self.recv()
         if type(ack)!=bool or (not ack):
-            raise CodingException("Failed to receive remote ACK.")
+            raise IOError("Failed to receive remote ACK.")

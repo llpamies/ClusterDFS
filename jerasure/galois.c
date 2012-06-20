@@ -450,6 +450,10 @@ void galois_w08_region_multiply(char *region,      /* Region to multiply */
     }
   }
  */
+  if (multby>255) {
+      fprintf(stderr, "galois_08_region_multiply -- multby too large\n");
+      exit(1);
+  }
 
   if (galois_mult_tables[8] == NULL) {
     if (galois_create_mult_tables(8) < 0) {
@@ -496,6 +500,11 @@ void galois_w16_region_multiply(char *region,      /* Region to multiply */
   ur1 = (unsigned short *) region;
   ur2 = (r2 == NULL) ? ur1 : (unsigned short *) r2;
   nbytes /= 2;
+
+  if (multby>65535) {
+      fprintf(stderr, "galois_08_region_multiply -- multby too large\n");
+      exit(1);
+  }
 
 
 /* This is used to test its performance with respect to just calling galois_single_multiply */
