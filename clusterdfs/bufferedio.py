@@ -1,20 +1,43 @@
 import io
 import sys
+import gc
 import os.path
 import numpy
-import socket
-import gevent
 import gevent.queue
-import itertools
-import collections
+import gevent.event
+import types
 
 from common import *
-
+     
+@ClassLogger
 class IOBuffer(object):
-    def __init__(self, size=io.DEFAULT_BUFFER_SIZE):
-        self.size = size
-        self.buff = bytearray(self.size)
+    pool = []
+    
+    @staticmethod
+    def create(factory, *args, **kwargs):      
+        if len(IOBuffer.pool)>0:
+            obj = IOBuffer.pool.pop()
+            obj.reset(factory, *args, **kwargs)
+            return obj
+        
+        else:
+            return IOBuffer(factory, *args, **kwargs)
+            
+    def free(self):
+        pass
+
+    def __del__(self):
+        IOBuffer.pool.append(self)
+        self.factory.event.set()
+        
+    def __init__(self, factory, size=io.DEFAULT_BUFFER_SIZE):
+        self.buff = bytearray(size)
         self.mem = memoryview(self.buff)
+        self.reset(factory, size=size)
+
+    def reset(self, factory, size=io.DEFAULT_BUFFER_SIZE):
+        self.factory = factory
+        self.size = size
         self.length = 0
 
     def data(self):
@@ -36,52 +59,42 @@ class IOBuffer(object):
         return numpy.ndarray((self.size,), dtype=numpy.uint8, buffer=self.buff)
 
 @ClassLogger
-class ReusableIOBuffer(IOBuffer):
-    def __init__(self, queue, *args, **kwargs):
-        self._queue = queue
-        super(ReusableIOBuffer, self).__init__(*args, **kwargs)
+class IOBufferFactory(object):    
+    def __init__(self, max_active=10):
+        self.max_active = 10
+        self.active = 0
+        self.event = gevent.event.Event()
 
-    def reset(self):
-        self._queue.put(self)
-
-@ClassLogger
-class DelayedReusableIOBuffer(IOBuffer):
-    '''
-        Delays the requeue until num calls to requeue.
-    '''
-    def __init__(self, iobuffer, num):
-        assert isinstance(iobuffer, ReusableIOBuffer)
-        self.iobuffer = iobuffer
-        self.num = num
-
-    def reset(self):
-        if self.num>1:
-            self.num -= 1
-        else:
-            self.iobuffer.reset()
-
-    def __getattr__(self, attribute):
-        return getattr(self.iobuffer, attribute)
-
+    def create(self, *args, **kwargs):
+        '''
+        if self.active>10*self.max_active:
+            gc.collect()
+        assert self.active<=10*self.max_active
+        '''
+        if self.active==self.max_active:
+            self.event.wait()
+            self.active -= 1
+            self.event.clear()
+            '''
+            if self.event.wait(1):
+                self.active -= 1
+                self.event.clear()
+            '''
+        self.active += 1
+        return IOBuffer.create(self, *args, **kwargs)
+    
 @ClassLogger
 class InputStreamReader(object):
-    def __init__(self, input_stream, num_buffers=2, debug_name=None):
-        if input_stream.size<10000:
-            raise Exception("lalala"+str(input_stream.size))
+    def __init__(self, input_stream, debug_name=None, num_buffers=2):
         if not isinstance(input_stream, InputStream):
             raise TypeError('input_stream must be an InputStream instance.')
 
         self.debug_name = debug_name
         self.exc_info = None
         self.input_stream = input_stream
-        self.free_queue = gevent.queue.Queue()
-        self.busy_queue = gevent.queue.Queue()
+        self.queue = gevent.queue.Queue()
         self.process = gevent.spawn(self._run)
-        #self.temp_writer = None
-
-        # Generate pool of buffers
-        for i in xrange(num_buffers):
-            self.free_queue.put(ReusableIOBuffer(self.free_queue))
+        self.buffer_fact = IOBufferFactory(num_buffers)
 
         self.finalized = False
 
@@ -90,9 +103,10 @@ class InputStreamReader(object):
             read = 0
             while read<self.input_stream.size:
                 if __debug__: self.logger.debug("%s iteration %d/%d.", self.debug_name or hex(id(self)), read, self.input_stream.size)
-                iobuffer = self.free_queue.get()
+                iobuffer = self.buffer_fact.create()
                 read += self.input_stream.read(iobuffer, nbytes=self.input_stream.size-read)
-                self.busy_queue.put(iobuffer)
+                self.queue.put(iobuffer)
+                del iobuffer
             if __debug__: self.logger.debug("Reader has successfully finished.")
             return False
         
@@ -103,53 +117,64 @@ class InputStreamReader(object):
             return True
         
         finally:
-            self.busy_queue.put(StopIteration)
+            self.queue.put(StopIteration)
             self.finalized = True
 
+    def get(self):
+        try:
+            iobuffer = self.queue.get()
+            if self.exc_info:
+                raise self.exc_info[1], None, self.exc_info[2]
+            return iobuffer
+        except StopIteration:
+            raise IOError("Reader ended before it was expected!")
+        
     def __iter__(self):
-        for iobuffer in self.busy_queue:
+        for iobuffer in self.queue:
             if self.exc_info:
                 raise self.exc_info[1], None, self.exc_info[2]
             yield iobuffer
         if self.process.get():
             raise self.exc_info[1], None, self.exc_info[2]
 
+    def finalize(self):
+        self.input_stream.finalize()
+        
     def flush(self, writer):
         if not isinstance(writer, OutputStreamWriter):
             raise TypeError("Should be an OutputStreamWriter.")
         for iobuffer in self:
             writer.write(iobuffer)
+        self.finalize()
 
 @ClassLogger
 class OutputStreamWriter(object):
-    def __init__(self, *output_streams):
-        self.num_outputs = len(output_streams)
-        self.output_streams = output_streams
+    def __init__(self, output_stream):
+        self.output_stream = output_stream
         self.exc_info = None
-        self.queues = [gevent.queue.Queue() for i in xrange(self.num_outputs)]
-        self.processes = [gevent.spawn(self._run, *x) for x in itertools.izip(self.output_streams, self.queues)]
+        self.queue = gevent.queue.Queue()
+        self.process = gevent.spawn(self._run)
         self.finalizing = False
         self.finalized = False
 
     def finalize(self):
         self.finalizing = True
-        for queue in self.queues:
-            queue.put(StopIteration)
+        self.queue.put(StopIteration)
 
     def write(self, iobuffer):
         if __debug__: self.logger.debug('Received a buffer to write.')
         if self.finalized or self.finalizing:
             raise IOError('Internal writer process finished.')
-        for queue in self.queues:
-            queue.put(DelayedReusableIOBuffer(iobuffer, self.num_outputs))
+        self.queue.put(iobuffer)
 
-    def _run(self, stream, queue):
+    def _run(self):
         try:
-            for iobuffer in queue:
+            for iobuffer in self.queue:
                 if __debug__: self.logger.debug('Processing a buffer to write.')
-                stream.write(iobuffer)
-                if __debug__: self.logger.debug('Reseting written buffer.')
-                iobuffer.reset()
+                self.output_stream.write(iobuffer)
+                if __debug__: self.logger.debug('Freeing written buffer.')
+                iobuffer.free()
+                del iobuffer
             return False
 
         except Exception, e:
@@ -161,11 +186,11 @@ class OutputStreamWriter(object):
 
         finally:
             self.finalized = True
+            self.output_stream.finalize()
 
     def join(self):
-        for process, queue in itertools.izip(self.processes, self.queues):
-            if process.get():
-                raise self.exc_info[1], None, self.exc_info[2]
+        if self.process.get():
+            raise self.exc_info[1], None, self.exc_info[2]
 
 class ReadCountMeta(type):
     def __new__(cls, classname, bases, classdict):
@@ -225,6 +250,7 @@ class FileInputStream(InputStream):
 @ClassLogger
 class FileOutputStream(object):
     def __init__(self, filename):
+        self.logger.debug("Opening (w): %s", filename)
         self.fileio = io.open(filename, 'wb')
 
     def write(self, iobuffer):
@@ -255,6 +281,7 @@ class NetworkInputStream(InputStream):
 
     def finalize(self):
         pass
+        #self.endpoint.kill()
 
 @ClassLogger
 class NetworkOutputStream(object):
@@ -265,4 +292,5 @@ class NetworkOutputStream(object):
         self.endpoint.send(iobuffer)
     
     def finalize(self):
+        #self.endpoint.kill()
         pass

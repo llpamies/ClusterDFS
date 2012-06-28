@@ -7,7 +7,7 @@ class GaloisBuffer:
     def __init__(self, size, buffer=None, bitfield=8):
         self.size = size
         self.bitfield = bitfield
-        self.maxv = (2<<bitfield)-1
+        self.maxv = (1<<bitfield)-1
 
         if self.bitfield not in [8,16,32]:
             raise ValueError("Incompatible bitfield. Use 8, 16 or 32.")
@@ -44,7 +44,7 @@ class GaloisBuffer:
             raise TypeError("Multiplication operand must be an integer.")
         
         if other<0 or other>self.maxv:
-            raise ValueError("Value out of range.")
+            raise ValueError("Value out of range: 0<=%d<=%d"%(other,self.maxv))
 
         return self.multadd(other, dest=GaloisBuffer(self.size, bitfield=self.bitfield), add=False)
 
@@ -53,7 +53,7 @@ class GaloisBuffer:
             raise TypeError("Multiplication operand must be an integer.")
        
         if other<0 or other>self.maxv:
-            raise ValueError("Value out of range.")
+            raise ValueError("Value out of range: 0<=%d<=%d"%(other,self.maxv))
 
         return self.multadd(other, dest=self, add=False)
 
@@ -62,7 +62,7 @@ class GaloisBuffer:
             raise TypeError("Multiplication operand must be an integer.")
         
         if other<0 or other>self.maxv:
-            raise ValueError("Value out of range.")
+            raise ValueError("Value out of range: 0<=%d<=%d"%(other,self.maxv))
 
         if dest!=None and not isinstance(dest, GaloisBuffer):
             raise TypeError("dest operand must be a GaloisBuffer.")
@@ -89,7 +89,7 @@ class GaloisBuffer:
             raise TypeError("Inversion operand must be an integer.")
 
         if val<0 or val>self.maxv:
-            raise ValueError("Value out of range.")
+            raise ValueError("Value out of range: 0<=%d<=%d"%(val,self.maxv))
 
         return galois_inverse(val, self.bitfield)
 
@@ -97,7 +97,8 @@ def inverse_val(val, bitfield=8):
     if type(val)!=int:
         raise TypeError("Inversion operand must be an integer.")
     
-    if val<0 or val>(2<<bitfield)-1:
-        raise ValueError("Value out of range.")
+    maxv = (1<<bitfield)-1
+    if val<0 or val>maxv:
+        raise ValueError("Value out of range: 0<=%d<=%d"%(val,maxv))
 
     return galois_inverse(val, bitfield)

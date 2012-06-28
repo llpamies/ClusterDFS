@@ -3,6 +3,7 @@ import commands
 import gevent.server
 import gevent.socket
 import traceback
+import socket
 
 from common import *
 from bufferedio import *
@@ -17,32 +18,26 @@ class NetworkHeader(object):
     STREAM_BUFFER = 5
 
 class NetworkException(Exception):
-    def __init__(self, message=None, trace=None):
-        if message!=None:
+    def __init__(self, message='', trace=''):
+        super(NetworkException, self).__init__(self)
+        self.trace = trace
+        if not trace:
             exc_info = sys.exc_info()
-            self.trace = traceback.format_list(traceback.extract_tb(exc_info[2]))
-            self.trace.append(message)
-            super(NetworkException, self).__init__(self, message)
-        elif trace!=None:
-            self.trace = trace
-            super(NetworkException, self).__init__(self, self.trace[0])
-        else:
-            assert False, "either message or trace must be specified."
+            self.trace = ''.join(traceback.format_list(traceback.extract_tb(exc_info[2])))
+            self.trace += '  '+message
     
     def log_forward(self, node):
-        self.trace.insert(0, 'dfs://%s:%d'%(node))
+        self.trace = '  dfs://%s:%d\n'%(node) + self.trace
 
     def serialize(self):
-        return '\n'.join(self.trace)
+        return self.trace
 
     @classmethod
     def unserialize(clazz, s):
-        return clazz(trace=s.split('\n'))
+        return clazz(trace=s)
 
     def __str__(self):
-        return 'NetworkError:\n    '+\
-               '\n    '.join(self.trace[:-1])+\
-               self.trace[-1]
+        return '\n'+self.trace
 
 @ClassLogger
 class NetworkEndpoint(object):
@@ -73,12 +68,12 @@ class NetworkEndpoint(object):
             raise TypeError("An InputStream was expected.")
         return stream
 
-    def recv_reader(self, num_buffers=2):
-        return InputStreamReader(self.recv_stream(), num_buffers=num_buffers)
+    def recv_reader(self):
+        return InputStreamReader(self.recv_stream())
 
     def _recv_integer(self):
         # signed 8 bytes integer
-        return struct.unpack('!q', self._recv_bytes(8)) 
+        return struct.unpack('!q', self._recv_bytes(8))[0]
     
     def _send_integer(self, integer):
         # signed 8 bytes integer
@@ -131,6 +126,7 @@ class NetworkEndpoint(object):
                 self.reading_stream = None
 
             packet_type, data_len = self._recv_header()
+            if __debug__: self.logger.debug("Received header: %d %d.", packet_type, data_len)
 
             if packet_type==NetworkHeader.ERROR:
                 if __debug__: self.logger.debug("Received error (%d bytes).", data_len)
@@ -154,7 +150,7 @@ class NetworkEndpoint(object):
                 raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
 
         except:
-            self.kill()
+            #self.kill()
             raise
 
     def recv_into(self, memview):
@@ -240,40 +236,49 @@ class ServerHandle(NetworkEndpoint):
         except socket.error as e:
             self.logger.error("Failed connection from %s: %s."%(repr(self.address), unicode(e)))
             response = None
-
+                        
         except NetworkException as e:
             self.logger.error("RaisedNetworkException:\n"+unicode(e))
-            e.log_forward((socket.gethostname(),self.address[1]))
+            e.log_forward((socket.gethostname(),self.server.address[1]))
             self.send(e)
 
         except Exception as e:
             self.logger.error("RaisedException:\n"+traceback.format_exc())
-            e = NetworkException(type(e).__name__+': '+unicode(e))
-            e.log_forward((socket.gethostname(),self.address[1]))
-            self.send(e)
+            ne = NetworkException(type(e).__name__+': '+unicode(e))
+            ne.log_forward((socket.gethostname(),self.server.address[1]))
+            self.send(ne)
 
         finally:
             try:
-                if response!=None: self.send(response)
+                if response!=None:
+                    self.send(0 if response else -1)
+                self.logger.debug("Closing connection.")
                 self.socket.shutdown(socket.SHUT_WR)
                 self.socket.close()
-            except:
+            except Exception as e:
+                self.logger.debug("ERROR: %s",unicode(e))
                 pass
 
-class Server(object):
-    def __init__(self, handle_class=ServerHandle, addr='', port=7777, timeout=None):
-        self.server = gevent.server.StreamServer((addr, port), self.handle)
+class Server():
+    def __init__(self, handle_class=ServerHandle, addr='', port=7777):
+        self.address = (addr,port)
+        self.server = gevent.server.StreamServer(self.address, self.netser_handle)
         self.handle_class = handle_class
-        self.timeout = timeout
 
+    '''
+    def init_socket(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super(Server, self).init_socket()
+    '''
+        
     def serve(self):
         self.server.serve_forever()
 
-    def handle(self, s, address):
-        s.settimeout(self.timeout)
+    def netser_handle(self, s, address):
         server_handle = self.handle_class(self, s, address)
         server_handle.handle()
-        
+
+@ClassLogger
 class Client(NetworkEndpoint):
     def __init__(self, addr, port):
         self.address = (addr, port)
@@ -285,5 +290,8 @@ class Client(NetworkEndpoint):
  
     def assert_ack(self):
         ack = self.recv()
-        if type(ack)!=bool or (not ack):
+        if __debug__: self.logger.debug("Received %s", unicode(ack))
+        if type(ack)!=int:
             raise IOError("Failed to receive remote ACK.")
+        if ack!=0:
+            raise IOError("Remote call failed.")
