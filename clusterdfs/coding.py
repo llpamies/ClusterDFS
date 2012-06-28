@@ -1,3 +1,4 @@
+import os
 import collections
 import gevent.queue
 
@@ -72,7 +73,7 @@ class NetCodingExecutor(object):
         self.readers = {}
         self.writers = {}
         
-        if __debug__: self.logger.debug('New executor for %s.', self.stream_id)
+        if __debug__: self.logger.debug('New executor for %d %s.', os.getpid(), self.stream_id)
         if __debug__: self.logger.debug('Processing streams...')
         for stream_name, stream_type in self.operations.streams:
             if __debug__: self.logger.debug('Processing stream: %s.',unicode(stream_name))
@@ -100,7 +101,6 @@ class NetCodingExecutor(object):
             self.size = NetCodingExecutor.sizes[self.stream_id]
             
         assert self.size!=None
-        print self.size
         
         if self.stream_id not in NetCodingExecutor.queues:
             NetCodingExecutor.queues[self.stream_id] = collections.defaultdict(gevent.queue.Queue)

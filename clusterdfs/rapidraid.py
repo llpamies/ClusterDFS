@@ -44,45 +44,7 @@ dec_node5_aux = NetCodingOperations('dec_node5_aux', output='stream')
 dec_node5_aux.add(('POP','queue','temp'))
 dec_node5_aux.add(('COPY','stream','temp'))
 
-dec_node6_aux = NetCodingOperations('dec_node6_aux', output='stream')
-dec_node6_aux.add(('POP','queue','temp'))
-dec_node6_aux.add(('COPY','stream','temp'))
-
-dec_node7_aux = NetCodingOperations('dec_node7_aux', output='stream')
-dec_node7_aux.add(('POP','queue','temp'))
-dec_node7_aux.add(('COPY','stream','temp'))
-
-dec_node8_aux = NetCodingOperations('dec_node8_aux', output='stream')
-dec_node8_aux.add(('POP','queue','temp'))
-dec_node8_aux.add(('COPY','stream','temp'))
-
-dec_node9_aux = NetCodingOperations('dec_node9_aux', output='stream')
-dec_node9_aux.add(('POP','queue','temp'))
-dec_node9_aux.add(('COPY','stream','temp'))
-
-dec_node10_aux = NetCodingOperations('dec_node10_aux', output='stream')
-dec_node10_aux.add(('POP','queue','temp'))
-dec_node10_aux.add(('COPY','stream','temp'))
-
-dec_node11_aux = NetCodingOperations('dec_node11_aux', output='stream')
-dec_node11_aux.add(('POP','queue','temp'))
-dec_node11_aux.add(('COPY','stream','temp'))
-
-dec_node12_aux = NetCodingOperations('dec_node12_aux', output='stream')
-dec_node12_aux.add(('POP','queue','temp'))
-dec_node12_aux.add(('COPY','stream','temp'))
-
-dec_node13_aux = NetCodingOperations('dec_node13_aux', output='stream')
-dec_node13_aux.add(('POP','queue','temp'))
-dec_node13_aux.add(('COPY','stream','temp'))
-
-dec_node14_aux = NetCodingOperations('dec_node14_aux', output='stream')
-dec_node14_aux.add(('POP','queue','temp'))
-dec_node14_aux.add(('COPY','stream','temp'))
-
-dec_node15_aux = NetCodingOperations('dec_node15_aux', output='stream')
-dec_node15_aux.add(('POP','queue','temp'))
-dec_node15_aux.add(('COPY','stream','temp'))
+# Decoding Operations:
 
 dec_node0 = NetCodingOperations('dec_node0', [('coded0', 'r'), ('orig0', 'w')], output='stream')
 dec_node0.add(('LOAD','temp','coded0'))
@@ -97,6 +59,7 @@ dec_node1.add(('LOAD','prev','dec_node0'))
 dec_node1.add(('IADD', 'temp', 'prev'))
 dec_node1.add(('MULT', 'temp', xisi[1], 'temp'))
 dec_node1.add(('WRITE', 'temp', 'orig1'))
+dec_node1.add(('PUSH', 'queue', 'temp'))
 dec_node1.add(('COPY', 'stream', 'prev'))
 dec_node1.add(('MULADD', 'stream', psis[1],'temp'))
 
@@ -106,6 +69,7 @@ dec_node2.add(('LOAD','prev','dec_node1'))
 dec_node2.add(('IADD', 'temp', 'prev'))
 dec_node2.add(('MULT', 'temp', xisi[2], 'temp'))
 dec_node2.add(('WRITE', 'temp', 'orig2'))
+dec_node2.add(('PUSH', 'queue', 'temp'))
 dec_node2.add(('COPY', 'stream', 'prev'))
 dec_node2.add(('MULADD', 'stream', psis[2],'temp'))
 
@@ -115,6 +79,7 @@ dec_node3.add(('LOAD','prev','dec_node2'))
 dec_node3.add(('IADD', 'temp', 'prev'))
 dec_node3.add(('MULT', 'temp', xisi[3], 'temp'))
 dec_node3.add(('WRITE', 'temp', 'orig3'))
+dec_node3.add(('PUSH', 'queue', 'temp'))
 dec_node3.add(('COPY', 'stream', 'prev'))
 dec_node3.add(('MULADD', 'stream', psis[3],'temp'))
 
@@ -124,6 +89,7 @@ dec_node4.add(('LOAD','prev','dec_node3'))
 dec_node4.add(('IADD', 'temp', 'prev'))
 dec_node4.add(('MULT', 'temp', xisi[4], 'temp'))
 dec_node4.add(('WRITE', 'temp', 'orig4'))
+dec_node4.add(('PUSH', 'queue', 'temp'))
 dec_node4.add(('COPY', 'stream', 'prev'))
 dec_node4.add(('MULADD', 'stream', psis[4],'temp'))
 
@@ -135,18 +101,67 @@ dec_node5.add(('IADD', 'temp', 'prev'))
 dec_node5.add(('MULADD', 'temp', xis[5], 'prevaux'))
 dec_node5.add(('MULT', 'temp', xisi[6], 'temp'))
 dec_node5.add(('WRITE', 'temp', 'orig5'))
+dec_node5.add(('PUSH', 'queue', 'temp'))
 dec_node5.add(('COPY', 'stream', 'prev'))
 dec_node5.add(('MULADD', 'stream', psis[5],'prevaux'))
 dec_node5.add(('MULADD', 'stream', psis[6],'temp'))
 
-dec_node6 = NetCodingOperations('dec_node6', [('coded6', 'r'), ('orig6', 'w'), ('dec_node5', 'r'), ('dec_node1_aux', 'r')])
+dec_node6 = NetCodingOperations('dec_node6', [('coded6', 'r'), ('orig6', 'w'), ('dec_node5', 'r'), ('dec_node1_aux', 'r')], output='stream')
 dec_node6.add(('LOAD','temp','coded6'))
 dec_node6.add(('LOAD','prev','dec_node5'))
 dec_node6.add(('LOAD','prevaux','dec_node1_aux'))
 dec_node6.add(('IADD', 'temp', 'prev'))
-#dec_node6.add(('IADD', 'temp', 'prevaux'))
-dec_node6.add(('MULT', 'temp', xisi[7], 'temp'))
+dec_node6.add(('MULADD', 'temp', xis[7], 'prevaux'))
+dec_node6.add(('MULT', 'temp', xisi[8], 'temp'))
 dec_node6.add(('WRITE', 'temp', 'orig6'))
+dec_node6.add(('COPY', 'stream', 'prev'))
+dec_node6.add(('MULADD', 'stream', psis[7],'prevaux'))
+dec_node6.add(('MULADD', 'stream', psis[8],'temp'))
+
+dec_node7 = NetCodingOperations('dec_node7', [('coded7', 'r'), ('orig7', 'w'), ('dec_node6', 'r'), ('dec_node2_aux', 'r')], output='stream')
+dec_node7.add(('LOAD','temp','coded7'))
+dec_node7.add(('LOAD','prev','dec_node6'))
+dec_node7.add(('LOAD','prevaux','dec_node2_aux'))
+dec_node7.add(('IADD', 'temp', 'prev'))
+dec_node7.add(('MULADD', 'temp', xis[9], 'prevaux'))
+dec_node7.add(('MULT', 'temp', xisi[10], 'temp'))
+dec_node7.add(('WRITE', 'temp', 'orig7'))
+dec_node7.add(('COPY', 'stream', 'prev'))
+dec_node7.add(('MULADD', 'stream', psis[9],'prevaux'))
+dec_node7.add(('MULADD', 'stream', psis[10],'temp'))
+
+dec_node8 = NetCodingOperations('dec_node8', [('coded8', 'r'), ('orig8', 'w'), ('dec_node7', 'r'), ('dec_node3_aux', 'r')], output='stream')
+dec_node8.add(('LOAD','temp','coded8'))
+dec_node8.add(('LOAD','prev','dec_node7'))
+dec_node8.add(('LOAD','prevaux','dec_node3_aux'))
+dec_node8.add(('IADD', 'temp', 'prev'))
+dec_node8.add(('MULADD', 'temp', xis[11], 'prevaux'))
+dec_node8.add(('MULT', 'temp', xisi[12], 'temp'))
+dec_node8.add(('WRITE', 'temp', 'orig8'))
+dec_node8.add(('COPY', 'stream', 'prev'))
+dec_node8.add(('MULADD', 'stream', psis[11],'prevaux'))
+dec_node8.add(('MULADD', 'stream', psis[12],'temp'))
+
+dec_node9 = NetCodingOperations('dec_node9', [('coded9', 'r'), ('orig9', 'w'), ('dec_node8', 'r'), ('dec_node4_aux', 'r')], output='stream')
+dec_node9.add(('LOAD','temp','coded9'))
+dec_node9.add(('LOAD','prev','dec_node8'))
+dec_node9.add(('LOAD','prevaux','dec_node4_aux'))
+dec_node9.add(('IADD', 'temp', 'prev'))
+dec_node9.add(('MULADD', 'temp', xis[13], 'prevaux'))
+dec_node9.add(('MULT', 'temp', xisi[14], 'temp'))
+dec_node9.add(('WRITE', 'temp', 'orig9'))
+dec_node9.add(('COPY', 'stream', 'prev'))
+dec_node9.add(('MULADD', 'stream', psis[13],'prevaux'))
+dec_node9.add(('MULADD', 'stream', psis[14],'temp'))
+
+dec_node10 = NetCodingOperations('dec_node10', [('coded10', 'r'), ('orig10', 'w'), ('dec_node9', 'r'), ('dec_node5_aux', 'r')])
+dec_node10.add(('LOAD','temp','coded10'))
+dec_node10.add(('LOAD','prev','dec_node9'))
+dec_node10.add(('LOAD','prevaux','dec_node5_aux'))
+dec_node10.add(('IADD', 'temp', 'prev'))
+dec_node10.add(('MULADD', 'temp', xis[15], 'prevaux'))
+dec_node10.add(('MULT', 'temp', xisi[16], 'temp'))
+dec_node10.add(('WRITE', 'temp', 'orig10'))
 
 # Encoding operations:
 
@@ -317,15 +332,10 @@ operations['dec_node3'] = dec_node3
 operations['dec_node4'] = dec_node4
 operations['dec_node5'] = dec_node5
 operations['dec_node6'] = dec_node6
-#operations['dec_node7'] = dec_node7
-#operations['dec_node8'] = dec_node8
-#operations['dec_node9'] = dec_node9
-#operations['dec_node10'] = dec_node10
-#operations['dec_node11'] = dec_node11
-#operations['dec_node12'] = dec_node12
-#operations['dec_node13'] = dec_node13
-#operations['dec_node14'] = dec_node14
-#operations['dec_node15'] = dec_node15
+operations['dec_node7'] = dec_node7
+operations['dec_node8'] = dec_node8
+operations['dec_node9'] = dec_node9
+operations['dec_node10'] = dec_node10
 
 operations['dec_node0_aux'] = dec_node0_aux
 operations['dec_node1_aux'] = dec_node1_aux
@@ -333,17 +343,6 @@ operations['dec_node2_aux'] = dec_node2_aux
 operations['dec_node3_aux'] = dec_node3_aux
 operations['dec_node4_aux'] = dec_node4_aux
 operations['dec_node5_aux'] = dec_node5_aux
-operations['dec_node6_aux'] = dec_node6_aux
-operations['dec_node7_aux'] = dec_node7_aux
-operations['dec_node8_aux'] = dec_node8_aux
-operations['dec_node9_aux'] = dec_node9_aux
-operations['dec_node10_aux'] = dec_node10_aux
-operations['dec_node11_aux'] = dec_node11_aux
-operations['dec_node12_aux'] = dec_node12_aux
-operations['dec_node13_aux'] = dec_node13_aux
-operations['dec_node14_aux'] = dec_node14_aux
-operations['dec_node15_aux'] = dec_node15_aux
-
 
 class RapidRaidResolver(NetCodingResolver):
     def __init__(self, *args, **kwargs):

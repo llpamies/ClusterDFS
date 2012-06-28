@@ -61,7 +61,7 @@ class IOBuffer(object):
 @ClassLogger
 class IOBufferFactory(object):    
     def __init__(self, max_active=10):
-        self.max_active = 10
+        self.max_active = 5
         self.active = 0
         self.event = gevent.event.Event()
 
@@ -250,7 +250,7 @@ class FileInputStream(InputStream):
 @ClassLogger
 class FileOutputStream(object):
     def __init__(self, filename):
-        self.logger.debug("Opening (w): %s", filename)
+        if __debug__: self.logger.debug("Opening (w): %s", filename)
         self.fileio = io.open(filename, 'wb')
 
     def write(self, iobuffer):

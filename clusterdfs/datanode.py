@@ -70,7 +70,6 @@ class BlockStoreManager(object):
         '''
         return OutputStreamWriter(FileOutputStream(self.path(block_id)))
         
-@ClassLogger
 class DataNodeQuery(ServerHandle):
     def process_query(self):
         header = DataNodeHeader.parse(self.recv()) 

@@ -252,7 +252,7 @@ class ServerHandle(NetworkEndpoint):
             try:
                 if response!=None:
                     self.send(0 if response else -1)
-                self.logger.debug("Closing connection.")
+                if __debug__: self.logger.debug("Closing connection.")
                 self.socket.shutdown(socket.SHUT_WR)
                 self.socket.close()
             except Exception as e:

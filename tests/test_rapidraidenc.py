@@ -47,8 +47,8 @@ try:
     #client = DataNodeClient('localhost', config.port+15)
     #client.coding(block_id, 'enc_node15')
     
-    client = DataNodeClient('localhost', config.port+6)
-    client.coding(block_id, 'dec_node6')
+    client = DataNodeClient('localhost', config.port+10)
+    client.coding(block_id, 'dec_node10')
     
 finally:    
     print 'killing'
