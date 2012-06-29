@@ -66,6 +66,7 @@ class IOBufferFactory(object):
         self.event = gevent.event.Event()
 
     def create(self, *args, **kwargs):
+        #return IOBuffer(self, *args, **kwargs)
         '''
         if self.active>10*self.max_active:
             gc.collect()

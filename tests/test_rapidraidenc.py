@@ -44,8 +44,8 @@ try:
     time.sleep(2)
     block_id = 'none'
 
-    #client = DataNodeClient('localhost', config.port+15)
-    #client.coding(block_id, 'enc_node15')
+    client = DataNodeClient('localhost', config.port+15)
+    client.coding(block_id, 'enc_node15')
     
     client = DataNodeClient('localhost', config.port+10)
     client.coding(block_id, 'dec_node10')

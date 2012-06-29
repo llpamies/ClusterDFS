@@ -109,11 +109,12 @@ class NetCodingExecutor(object):
         NetCodingExecutor.numreg[self.stream_id] += 1
 
     def finalize(self):
+        '''
         NetCodingExecutor.numreg[self.stream_id] -= 1
         if NetCodingExecutor.numreg[self.stream_id] == 0:
             del NetCodingExecutor.sizes[self.stream_id]
             del NetCodingExecutor.queues[self.stream_id]
-                                
+        '''               
         if __debug__: self.logger.debug('Finalizing coding...')
         
         if __debug__: self.logger.debug('Killing clients..')
