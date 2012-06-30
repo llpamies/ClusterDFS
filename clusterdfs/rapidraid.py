@@ -400,5 +400,7 @@ class RapidRaidResolver(NetCodingResolver):
     def get_orig(self, coding_id):
         #return 'girl.64mb.coded'
         return 'orig%d'%coding_id
-    
-__all__ = [operations, RapidRaidResolver]
+
+k = 11
+
+__all__ = [operations, RapidRaidResolver, k]

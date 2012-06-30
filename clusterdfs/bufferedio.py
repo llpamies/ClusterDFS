@@ -60,8 +60,8 @@ class IOBuffer(object):
 
 @ClassLogger
 class IOBufferFactory(object):    
-    def __init__(self, max_active=10):
-        self.max_active = 5
+    def __init__(self, max_active=5):
+        self.max_active = max_active
         self.active = 0
         self.event = gevent.event.Event()
 
@@ -86,7 +86,11 @@ class IOBufferFactory(object):
     
 @ClassLogger
 class InputStreamReader(object):
-    def __init__(self, input_stream, debug_name=None, num_buffers=2):
+    def __init__(self, input_stream, debug_name=None, num_buffers=5, size=None):
+        '''
+        If the 'size' is larger than the 'available()' bytes in the input stream,
+        then garbage is read to achieve 'size'.
+        '''
         if not isinstance(input_stream, InputStream):
             raise TypeError('input_stream must be an InputStream instance.')
 
@@ -96,16 +100,33 @@ class InputStreamReader(object):
         self.queue = gevent.queue.Queue()
         self.process = gevent.spawn(self._run)
         self.buffer_fact = IOBufferFactory(num_buffers)
-
-        self.finalized = False
+        self.finalized = False        
+        self.size = size if size!=None else self.input_stream.size
+        
+        self.logger.debug("Starting new %d bytes reader.", self.size)
 
     def _run(self):
         try:
-            read = 0
-            while read<self.input_stream.size:
-                if __debug__: self.logger.debug("%s iteration %d/%d.", self.debug_name or hex(id(self)), read, self.input_stream.size)
+            bytes_left = self.size
+            while bytes_left>0:
+                if __debug__: self.logger.debug("%s iteration %d/%d.", 
+                                                self.debug_name or hex(id(self)),
+                                                self.size-bytes_left, self.size)
+                
                 iobuffer = self.buffer_fact.create()
-                read += self.input_stream.read(iobuffer, nbytes=self.input_stream.size-read)
+                avail = self.input_stream.available()
+                self.logger.debug("uffer: %d",iobuffer.length)
+                self.logger.debug("a:%d; b:%d; l:%d", avail, iobuffer.size, bytes_left)
+                if avail>0:
+                    nbytes = min(iobuffer.size, avail, bytes_left)
+                    self.logger.debug("------%d", nbytes)
+                    bytes_left -= self.input_stream.read(iobuffer, nbytes=nbytes)
+                    
+                else:
+                    nbytes = min(bytes_left, iobuffer.size)
+                    iobuffer.length = nbytes
+                    bytes_left -= nbytes
+                    
                 self.queue.put(iobuffer)
                 del iobuffer
             if __debug__: self.logger.debug("Reader has successfully finished.")
@@ -193,33 +214,17 @@ class OutputStreamWriter(object):
         if self.process.get():
             raise self.exc_info[1], None, self.exc_info[2]
 
-class ReadCountMeta(type):
-    def __new__(cls, classname, bases, classdict):
-        def new_read(self, *args, **kwargs):
-            v = self._original_read(*args, **kwargs)
-            self.read_count += v
-            return v
-        
-        classdict['read_count'] = 0
-        
-        if 'read' in classdict:
-            classdict['_original_read'] = classdict['read']
-            classdict['read'] = new_read
-
-        return type.__new__(cls, classname, bases, classdict)
-
 @ClassLogger
 class InputStream(object):
-    __metaclass__ = ReadCountMeta
-
     def __init__(self, size):
         if (type(size)!=int and type(size)!=long) or size<=0:
             raise TypeError("Parameter size must be a positive integer, got %s."%str(size))
         self.size = size
+        self.bytes_left = size
 
-    def is_processed(self):
-        return self.read_count>=self.size 
-
+    def available(self):
+        return self.bytes_left
+        
     def finalize(self):
         pass
 
@@ -243,6 +248,7 @@ class FileInputStream(InputStream):
             raise IOError("File error or probably reached end of file.")
         
         iobuffer.length = read
+        self.bytes_left -= read
         return read
 
     def finalize(self):
@@ -278,6 +284,7 @@ class NetworkInputStream(InputStream):
             read += self.endpoint.recv_into(iobuffer.mem[read:nbytes])
         
         iobuffer.length = read
+        self.bytes_left -= read
         return read
 
     def finalize(self):

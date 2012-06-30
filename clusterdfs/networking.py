@@ -1,3 +1,4 @@
+import sys
 import struct
 import commands
 import gevent.server
@@ -5,8 +6,8 @@ import gevent.socket
 import traceback
 import socket
 
-from common import *
-from bufferedio import *
+from common import ClassLogger
+from bufferedio import NetworkOutputStream, OutputStreamWriter, InputStream, InputStreamReader, NetworkInputStream, IOBuffer
 
 class NetworkHeader(object):
     ERROR = 1
@@ -58,6 +59,7 @@ class NetworkEndpoint(object):
 
         self._streamed = 0
         self._to_stream = 0
+        self._partial_buffer = 0
     
     def new_writer(self):
         return OutputStreamWriter(self.output_stream)
@@ -120,6 +122,9 @@ class NetworkEndpoint(object):
 
     def recv(self):
         try:
+            if self._partial_buffer>0:
+                raise IOError("Cannot read new data if the previous buffer wasn't completely read.")
+                
             if self.reading_stream!=None:
                 if not self.reading_stream.is_processed():
                     raise Exception("Cannot receive data from the socket until the stream is processed.")
@@ -153,32 +158,39 @@ class NetworkEndpoint(object):
             #self.kill()
             raise
 
+    def _fill(self, memview):
+        nbytes = min(self._partial_buffer, len(memview))
+        received = 0
+        while received < nbytes:
+            new_recv = self.socket.recv_into(memview[received:nbytes])
+            if new_recv == 0:
+                raise IOError("Connection reset.")
+            received += new_recv
+        self._partial_buffer -= received 
+        self._streamed += received
+        if __debug__: self.logger.debug("Received buffer (%d bytes).", received)
+        return received
+
     def recv_into(self, memview):
         try:
-            packet_type, data_len = self._recv_header()
+            if self._partial_buffer==0:
+                packet_type, data_len = self._recv_header()
 
-            if packet_type==NetworkHeader.ERROR:
-                #It raises an exception
-                self._recv_error(data_len)
-                assert False, 'Exception should be raised.'
-            
-            elif packet_type==NetworkHeader.STREAM_BUFFER:
-                if len(memview)<data_len:
-                    raise IOError("The memory buffer is too small.")
-                received = 0
-                while received<data_len:
-                    new_recv = self.socket.recv_into(memview[received:])
-                    if new_recv==0:
-                        raise IOError("Connection reset.")
-                    received += new_recv 
-                assert received==data_len, (received, data_len)
-                self._streamed += received
-                if __debug__: self.logger.debug("Received buffer (%d bytes).", data_len)
-                return received
-
+                if packet_type==NetworkHeader.ERROR:
+                    #It raises an exception
+                    self._recv_error(data_len)
+                    assert False, 'Exception should be raised.'
+                
+                elif packet_type==NetworkHeader.STREAM_BUFFER:
+                    self._partial_buffer = data_len
+                    return self._fill(memview)
+    
+                else:
+                    if __debug__: self.logger.debug("Invalid header after receiving %d streamed bytes out of %d."%(self._streamed, self._to_stream))
+                    raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
+                
             else:
-                if __debug__: self.logger.debug("Invalid header after receiving %d streamed bytes out of %d."%(self._streamed, self._to_stream))
-                raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
+                return self._fill(memview)
 
         except:
             self.kill()

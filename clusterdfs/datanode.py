@@ -1,12 +1,16 @@
+import os
+import math
 import uuid
+import gevent
+import logging
 import tempfile
 import importlib
   
-from common import Config
-from coding import *
-from headers import *
-from networking import *
-from bufferedio import *
+from common import Config, ClassLogger
+from coding import  NetCodingExecutor, NetCodingInputStream
+from headers import DataNodeHeader, NameNodeHeader
+from networking import Client, Server, ServerHandle
+from bufferedio import FileInputStream, FileOutputStream, InputStreamReader, OutputStreamWriter
               
 class DataNodeConfig(Config):
     port = 13100
@@ -82,7 +86,10 @@ class DataNodeQuery(ServerHandle):
             return self.retrieve_block(**header)
         
         elif op==DataNodeHeader.OP_CODING:
-            return self.node_coding(**header) #FIXME
+            return self.node_coding(**header)
+        
+        elif op==DataNodeHeader.OP_INSERT:
+            return self.insert_data(**header)
         
         else:
             assert False
@@ -130,6 +137,24 @@ class DataNodeQuery(ServerHandle):
         writer.join()
         self.logger.info('Block %s sent successfully.', block_id)
 
+    def insert_data(self, block_id=None, **kwargs):
+        coding = self.server.config.coding_mod
+        instream = self.recv_stream()
+        real_size = instream.size 
+        block_size = int(math.ceil(float(real_size)/coding.k))
+        store_size = block_size*coding.k
+        self.logger.info("Inserting a file of size %d, block size %d.", store_size, block_size)
+        for i in xrange(coding.k):
+            self.logger.info("Inserting part %d of %d.", i, coding.k)
+            reader = InputStreamReader(instream, size=block_size)
+            writer = OutputStreamWriter(self.server.block_store.get_output_stream(block_id+"_part%d"%i))
+            reader.flush(writer)
+            writer.finalize()
+            writer.join()
+
+        logging.info("Object '%s' inserted successfully.", block_id)
+
+
     def node_coding(self, block_id=None, coding_id=None, stream_id=None, **kwargs):
         # Generate an ID that will be the ID for all the coding stream (pipeline).
         if stream_id=='':
@@ -175,19 +200,20 @@ class DataNodeNotifier(object):
         self.process.kill()
 
     def timeout(self):
+        # FIXME: REWRITE!!!!
         while True:
             # send ping
             try:
                 logging.debug('Sending ping.')
+                '''
                 ne = NetworkEndpoint(gevent.socket.create_connection((self.config.namenode_addr, self.config.namenode_port)))
                 ne.send(self.ping)
                 ne.send([])
                 response = ne.recv()
-                if response['code']!=NetworkHeader.OK:
-                    logging.error('Cannot deliver ping to nameserver: %s', response['msg']) 
-
-            except socket.error, (value, message):
-                logging.error("Cannot deliver ping to nameserver: %s."%(message))
+                '''
+                
+            except Exception as e:
+                logging.error("Cannot deliver ping to nameserver: %s."%unicode(e))
             
             # sleep timeout
             gevent.sleep(self.config.ping_timeout)
@@ -215,6 +241,20 @@ class DataNode(Server):
 class DataNodeClient(Client):
     def __init__(self, address, port):
         super(DataNodeClient, self).__init__(address, port)
+    
+    def insert(self, block_id, local_path):
+        self.send(DataNodeHeader.generate(DataNodeHeader.OP_INSERT, block_id))
+        writer = self.new_writer()
+        istream = FileInputStream(local_path)
+        self.send(istream)
+        reader = InputStreamReader(istream)
+        reader.flush(writer)
+        writer.finalize()
+        writer.join()
+        istream.finalize()
+        self.logger.debug("Wating for ACK.")
+        self.assert_ack()
+        self.logger.debug("END.")
     
     def retrieve(self, block_id, local_path):
         self.send(DataNodeHeader.generate(DataNodeHeader.OP_RETRIEVE, block_id))

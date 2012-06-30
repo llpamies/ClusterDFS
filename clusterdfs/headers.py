@@ -11,6 +11,7 @@ class DataNodeHeader(object):
     OP_STORE = 0
     OP_RETRIEVE = 1
     OP_CODING = 2
+    OP_INSERT = 3
             
     schema = avro.schema.parse("""\
                     {"type": "record",
