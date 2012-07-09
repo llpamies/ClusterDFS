@@ -1,0 +1,102 @@
+#!/usr/bin/env python
+from __future__ import division
+import os
+import sys
+import platform
+sys.path.append(os.getcwd())
+if platform.architecture()==('32bit', 'ELF'):
+    sys.path.append(os.getcwd()+'/lib/')
+elif platform.architecture()==('64bit', 'ELF'):
+    sys.path.append(os.getcwd()+'/lib64/')
+else:
+    raise OSError('Platform is not supported.')
+
+import time
+import cPickle as pickle
+import itertools
+
+from clusterdfs.networking import Client, Server, ServerHandle
+from clusterdfs.bufferedio import IOBuffer, InputStream
+from clusterdfs.datanode import DataNodeHeader
+
+from cauchyec import CauchyEC
+
+def iterzipbuffers(iterables):
+    iterators = [iter(i) for i in iterables]
+    while True:
+        yield [next(i) for i in iterators]
+
+class CauchyCodingServer(Server):
+    def __init__(self, port):
+        Server.__init__(self, CauchyCodingQuery, port=port)
+
+    def init(self):
+        self.serve()
+
+class CauchyCodingQuery(ServerHandle):
+    def process_query(self):
+        raw_clients = None
+        encoded_clients = None
+        w = 4
+        
+        try:
+            name, sources, dests = pickle.loads(self.recv())
+            k = len(sources)
+            m = len(dests)+1
+                    
+            raw_clients = [Client(*node) for node in sources]
+            encoded_clients = [Client(*node) for node in dests]
+    
+            for i,client in enumerate(raw_clients):
+                client.send(DataNodeHeader.generate(DataNodeHeader.OP_RETRIEVE, '%s.part%d'%(name, i)))
+    
+            for i,client in enumerate(encoded_clients):
+                client.send(DataNodeHeader.generate(DataNodeHeader.OP_STORE, '%s.cauchy%d'%(name, i)))
+    
+            stream_readers = [c.recv_reader(async=True) for c in raw_clients]
+    
+            size = None
+            for r in stream_readers:
+                if size!=None:
+                    assert r.input_stream.size==size
+                else:
+                    size = r.input_stream.size
+    
+            input_stream = InputStream(size)
+            for client in encoded_clients:
+                client.send(input_stream)
+    
+            code = CauchyEC(k, m, bitfield=w)
+    
+            encoded_iobuffers = [IOBuffer() for i in xrange(m)]
+            encoded_buffers = [iobuffer.as_numpy_byte_array() for iobuffer in encoded_iobuffers]
+    
+            for raw_iobuffers in iterzipbuffers(stream_readers):
+                raw_buffers = [iobuffer.as_numpy_byte_array() for iobuffer in raw_iobuffers]
+                code.encode(raw_buffers, encoded_buffers)
+                length = None
+                for iobuffer in raw_iobuffers:
+                    if length==None:
+                        length = iobuffer.length
+                    else:
+                        assert length==iobuffer.length
+                    iobuffer.free()
+                    del iobuffer
+                for iobuffer, client in itertools.izip(encoded_iobuffers, encoded_clients):
+                    iobuffer.length = length
+                    client.send(iobuffer)
+    
+            for client in itertools.chain(encoded_clients, raw_clients):
+                client.assert_ack()
+                
+        finally:
+            if raw_clients:
+                for c in raw_clients:
+                    c.kill()
+                    
+            if encoded_clients:
+                for c in encoded_clients:
+                    c.kill()
+                    
+if __name__=='__main__':
+    CauchyCodingServer(6969).init()

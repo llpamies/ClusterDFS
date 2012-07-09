@@ -1,18 +1,24 @@
+from clusterdfs.common import ClassLogger
 from clusterdfs.coding import NetCodingOperations, NetCodingResolver, RemoteNetCodingReader
-from clusterdfs.bufferedio import InputStreamReader, FileInputStream, OutputStreamWriter, FileOutputStream
 
 import re
 import galoisbuffer
 
-bf = 16
 
+bf = 16
 xis = [48386, 55077, 40589, 63304, 49062, 47871, 17507, 49390,
         54054, 45897, 55796, 27611, 50294, 30336, 882, 60087,
         56842, 14836, 7618, 32265, 22869, 38138]
-
 psis = [11950, 26509, 16377, 40200, 35199, 3729, 10098, 16621,
          3878, 45829, 1937, 60293, 38528, 31094, 7594, 45107,
          15330, 63820, 41913, 20615, 58324, 16983]
+'''
+bf = 8
+xis = [141, 139, 79, 152, 152, 243, 2, 37, 149, 189, 174, 
+       149, 237, 31, 198, 15, 45, 138, 246, 100, 101, 16]
+psis = [129, 207, 158, 56, 171, 247, 145, 139, 137, 211, 190,
+        230, 140, 177, 75, 47, 94, 60, 244, 69, 190, 167]
+'''
 
 xisi = map(lambda x: galoisbuffer.inverse_val(x, bitfield=bf), xis)
            
@@ -168,7 +174,7 @@ dec_node10.add(('WRITE', 'temp', 'orig10'))
 enc_node0 = NetCodingOperations('enc_node0', [('part0', 'r'), ('coded0', 'w')], output='stream')
 enc_node0.add(('LOAD', 'temp', 'part0'))
 enc_node0.add(('MULT', 'stream', psis[0], 'temp'))
-enc_node0.add(('MULT', 'temp', xis[0], 'temp'))
+#enc_node0.add(('MULT', 'temp', xis[0], 'temp'))
 enc_node0.add(('WRITE', 'temp', 'coded0'))
 
 enc_node1 = NetCodingOperations('enc_node1', [('part1', 'r'), ('coded1', 'w'), ('enc_node0','r')], output='stream')
@@ -307,6 +313,7 @@ enc_node15.add(('LOAD', 'prev', 'enc_node14'))
 enc_node15.add(('MULADD', 'prev', xis[21], 'local'))
 enc_node15.add(('WRITE', 'prev', 'coded15'))
 
+
 operations = {}
 operations['enc_node0'] = enc_node0
 operations['enc_node1'] = enc_node1
@@ -344,8 +351,23 @@ operations['dec_node3_aux'] = dec_node3_aux
 operations['dec_node4_aux'] = dec_node4_aux
 operations['dec_node5_aux'] = dec_node5_aux
 
+test = NetCodingOperations('test', [('part10', 'r'), ('part5', 'r'), ('coded10', 'w'), ('part0','r')])
+test.add(('LOAD', 'local5', 'part5'))
+test.add(('LOAD', 'local10', 'part10'))
+test.add(('LOAD', 'prev', 'part0'))
+test.add(('COPY', 'local5', 'prev'))
+test.add(('MULADD', 'local5', psis[15], 'local5'))
+test.add(('MULADD', 'local5', psis[16], 'local10'))
+test.add(('MULADD', 'prev', xis[15], 'local5'))
+test.add(('MULADD', 'prev', xis[16], 'local10'))
+test.add(('WRITE', 'prev', 'coded10'))
+
+operations['test'] = test
+
+@ClassLogger
 class RapidRaidResolver(NetCodingResolver):
     def __init__(self, *args, **kwargs):
+        self.logger.info("RapidRaid in %d bits.", bf)
         self.dataenc_node_config = kwargs.pop('config')
         super(RapidRaidResolver, self).__init__(*args, **kwargs)
     
@@ -353,22 +375,22 @@ class RapidRaidResolver(NetCodingResolver):
         if key.startswith('enc_node'):
             coding_id = key[8:]
             coding_id_int = int(re.search("(\d*)",coding_id).group(0))         
-            return RemoteNetCodingReader(self.get_enc_node(coding_id_int),
-                                          self.block_id, key, self.stream_id)
+            return RemoteNetCodingReader(self.get_enc_node(coding_id_int), self.block_id,
+                                         key, self.stream_id, self.nodes, debug_name=key)
         
         elif key.startswith('dec_node'):
             coding_id = key[8:]
             coding_id_int = int(re.search("(\d*)",coding_id).group(0))
-            return RemoteNetCodingReader(self.get_enc_node(coding_id_int),
-                                          self.block_id, key, self.stream_id)
+            return RemoteNetCodingReader(self.get_enc_node(coding_id_int), self.block_id, 
+                                         key, self.stream_id, self.nodes, debug_name=key)
         
         elif key.startswith('part'):
             coding_id = int(key[4:])
-            return self.block_store.get_reader(self.get_part(coding_id))
+            return self.block_store.get_reader(self.get_part(coding_id), debug_name=key)
         
         elif key.startswith('coded'):
             coding_id = int(key[5:])
-            return self.block_store.get_reader(self.get_coded(coding_id))
+            return self.block_store.get_reader(self.get_coded(coding_id), debug_name=key)
         
         else:
             assert False
@@ -376,31 +398,26 @@ class RapidRaidResolver(NetCodingResolver):
     def get_writer(self, key):
         if key.startswith('coded'):
             coding_id = int(key[5:])
-            return self.block_store.get_writer(self.get_coded(coding_id))
+            return self.block_store.get_writer(self.get_coded(coding_id), debug_name=key)
         
         elif key.startswith('orig'):
             coding_id = int(key[4:])
-            return self.block_store.get_writer(self.get_orig(coding_id))
+            return self.block_store.get_writer(self.get_orig(coding_id), debug_name=key)
           
         else:
             assert False
-            
-    def get_enc_node(self, coding_id):
-        #return ('thinclient-%02d'%coding_id, 7000+coding_id)
-        return ('localhost', 3900 + coding_id)
     
     def get_part(self, coding_id):
         #return 'girl.64mb.part%d'%coding_id
-        return 'part%d'%coding_id
+        return self.block_id+'.part%d'%coding_id
     
     def get_coded(self, coding_id):
         #return 'girl.64mb.coded'
-        return 'coded%d'%coding_id
+        return self.block_id+'.coded%d'%coding_id
     
     def get_orig(self, coding_id):
         #return 'girl.64mb.coded'
-        return 'orig%d'%coding_id
+        return self.block_id+'.orig%d'%coding_id
 
 k = 11
-
 __all__ = [operations, RapidRaidResolver, k]

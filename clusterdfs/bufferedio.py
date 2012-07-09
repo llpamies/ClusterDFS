@@ -5,12 +5,14 @@ import os.path
 import numpy
 import gevent.queue
 import gevent.event
-import types
 
-from common import *
-     
+from clusterdfs.common import ClassLogger
+
+from galoisbuffer import GaloisBuffer
+
 @ClassLogger
 class IOBuffer(object):
+    defsize = 4*io.DEFAULT_BUFFER_SIZE
     pool = []
     
     @staticmethod
@@ -24,18 +26,26 @@ class IOBuffer(object):
             return IOBuffer(factory, *args, **kwargs)
             
     def free(self):
-        pass
+        self.factory.event.set()
 
+    '''
     def __del__(self):
         IOBuffer.pool.append(self)
-        self.factory.event.set()
-        
-    def __init__(self, factory, size=io.DEFAULT_BUFFER_SIZE):
+        if self.factory: self.factory.event.set()
+    '''
+         
+    def __init__(self, factory=None, size=None):
+        if size==None:
+            size = IOBuffer.defsize
         self.buff = bytearray(size)
         self.mem = memoryview(self.buff)
-        self.reset(factory, size=size)
+        self.reset(factory=factory, size=size)
+        
+        self.galois = GaloisBuffer(size, bitfield=16, buffer=self.buff)
 
-    def reset(self, factory, size=io.DEFAULT_BUFFER_SIZE):
+    def reset(self, factory=None, size=None):
+        if size==None:
+            size = IOBuffer.defsize
         self.factory = factory
         self.size = size
         self.length = 0
@@ -66,6 +76,7 @@ class IOBufferFactory(object):
         self.event = gevent.event.Event()
 
     def create(self, *args, **kwargs):
+        #gc.collect()
         #return IOBuffer(self, *args, **kwargs)
         '''
         if self.active>10*self.max_active:
@@ -86,7 +97,7 @@ class IOBufferFactory(object):
     
 @ClassLogger
 class InputStreamReader(object):
-    def __init__(self, input_stream, debug_name=None, num_buffers=5, size=None):
+    def __init__(self, input_stream, debug_name=None, num_buffers=2, size=None, async=False):
         '''
         If the 'size' is larger than the 'available()' bytes in the input stream,
         then garbage is read to achieve 'size'.
@@ -97,38 +108,27 @@ class InputStreamReader(object):
         self.debug_name = debug_name
         self.exc_info = None
         self.input_stream = input_stream
-        self.queue = gevent.queue.Queue()
-        self.process = gevent.spawn(self._run)
         self.buffer_fact = IOBufferFactory(num_buffers)
         self.finalized = False        
         self.size = size if size!=None else self.input_stream.size
+        self.bytes_left = self.size
+        self.async = async
         
-        self.logger.debug("Starting new %d bytes reader.", self.size)
+        if self.async:
+            self.queue = gevent.queue.Queue()
+            self.process = gevent.spawn(self._run)
+            self.get = self._get_async
+        else:
+            self.get = self._get_sync
+                
+        if __debug__: self.logger.debug("Starting new %d bytes reader (async=%s).", self.size, unicode(self.async))
 
     def _run(self):
+        assert self.async
+        if __debug__: self.logger.debug("Starting %s internal async process.", self.debug_name or hex(id(self)))
         try:
-            bytes_left = self.size
-            while bytes_left>0:
-                if __debug__: self.logger.debug("%s iteration %d/%d.", 
-                                                self.debug_name or hex(id(self)),
-                                                self.size-bytes_left, self.size)
-                
-                iobuffer = self.buffer_fact.create()
-                avail = self.input_stream.available()
-                self.logger.debug("uffer: %d",iobuffer.length)
-                self.logger.debug("a:%d; b:%d; l:%d", avail, iobuffer.size, bytes_left)
-                if avail>0:
-                    nbytes = min(iobuffer.size, avail, bytes_left)
-                    self.logger.debug("------%d", nbytes)
-                    bytes_left -= self.input_stream.read(iobuffer, nbytes=nbytes)
-                    
-                else:
-                    nbytes = min(bytes_left, iobuffer.size)
-                    iobuffer.length = nbytes
-                    bytes_left -= nbytes
-                    
-                self.queue.put(iobuffer)
-                del iobuffer
+            while self.bytes_left>0:
+                self.queue.put(self._get_sync())
             if __debug__: self.logger.debug("Reader has successfully finished.")
             return False
         
@@ -142,7 +142,8 @@ class InputStreamReader(object):
             self.queue.put(StopIteration)
             self.finalized = True
 
-    def get(self):
+    def _get_async(self):
+        if __debug__: self.logger.debug("Calling async get in %s.", self.debug_name or hex(id(self)))
         try:
             iobuffer = self.queue.get()
             if self.exc_info:
@@ -150,44 +151,93 @@ class InputStreamReader(object):
             return iobuffer
         except StopIteration:
             raise IOError("Reader ended before it was expected!")
+
+    def _get_sync(self):
+        if __debug__: self.logger.debug("Calling sync get in %s.", self.debug_name or hex(id(self)))
+        assert self.bytes_left>0
+        if __debug__: self.logger.debug("%s get iteration %d/%d.", 
+                                        self.debug_name or hex(id(self)),
+                                        self.size-self.bytes_left, self.size)
+        
+        iobuffer = self.buffer_fact.create()
+        avail = self.input_stream.available()
+        if avail>0:
+            nbytes = min(iobuffer.size, avail, self.bytes_left)
+            self.bytes_left -= self.input_stream.read(iobuffer, nbytes=nbytes)
+            
+        else:
+            nbytes = min(self.bytes_left, iobuffer.size)
+            iobuffer.length = nbytes
+            self.bytes_left -= nbytes
+         
+        return iobuffer   
         
     def __iter__(self):
-        for iobuffer in self.queue:
-            if self.exc_info:
+        if self.async:
+            for iobuffer in self.queue:
+                if self.exc_info:
+                    raise self.exc_info[1], None, self.exc_info[2]
+                yield iobuffer
+            if self.process.get():
                 raise self.exc_info[1], None, self.exc_info[2]
-            yield iobuffer
-        if self.process.get():
-            raise self.exc_info[1], None, self.exc_info[2]
-
-    def finalize(self):
-        self.input_stream.finalize()
-        
+            
+        else:
+            while self.bytes_left>0:
+                yield self._get_sync()
+  
+            if __debug__: self.logger.debug("Reader has successfully finished.")
+            self.finalized = True
+            
     def flush(self, writer):
         if not isinstance(writer, OutputStreamWriter):
             raise TypeError("Should be an OutputStreamWriter.")
         for iobuffer in self:
             writer.write(iobuffer)
-        self.finalize()
+            #gevent.sleep(seconds=0)
+
+    def finalize(self, kill=False):
+        if self.async:
+            self.process.kill()
+        if kill:
+            self.input_stream.finalize()
 
 @ClassLogger
 class OutputStreamWriter(object):
-    def __init__(self, output_stream):
+    def __init__(self, output_stream, async=False, debug_name=None):
         self.output_stream = output_stream
         self.exc_info = None
-        self.queue = gevent.queue.Queue()
-        self.process = gevent.spawn(self._run)
         self.finalizing = False
         self.finalized = False
+        self.debug_name = debug_name
+        self.async = async
+        
+        if self.async:
+            self.queue = gevent.queue.Queue()
+            self.process = gevent.spawn(self._run)
+        else:
+            self.queue = None
+            self.process = None
 
     def finalize(self):
         self.finalizing = True
-        self.queue.put(StopIteration)
+        if self.async:
+            self.queue.put(StopIteration)
+        else:
+            self.finalized = True
 
     def write(self, iobuffer):
         if __debug__: self.logger.debug('Received a buffer to write.')
-        if self.finalized or self.finalizing:
-            raise IOError('Internal writer process finished.')
-        self.queue.put(iobuffer)
+        if not self.async:
+            if __debug__: self.logger.debug('Processing a buffer to write.')
+            self.output_stream.write(iobuffer)
+            if __debug__: self.logger.debug('Freeing written buffer.')
+            iobuffer.free()
+            del iobuffer
+        
+        else:
+            if self.finalized or self.finalizing:
+                raise IOError('Internal writer process finished.')
+            self.queue.put(iobuffer)
 
     def _run(self):
         try:
@@ -207,14 +257,13 @@ class OutputStreamWriter(object):
                 return False
 
         finally:
+            self.finalizing = False
             self.finalized = True
-            self.output_stream.finalize()
 
     def join(self):
-        if self.process.get():
+        if self.async and self.process.get():
             raise self.exc_info[1], None, self.exc_info[2]
 
-@ClassLogger
 class InputStream(object):
     def __init__(self, size):
         if (type(size)!=int and type(size)!=long) or size<=0:
@@ -228,6 +277,7 @@ class InputStream(object):
     def finalize(self):
         pass
 
+@ClassLogger
 class FileInputStream(InputStream):
     def __init__(self, filename, offset=0):
         InputStream.__init__(self, os.path.getsize(filename))
@@ -268,6 +318,7 @@ class FileOutputStream(object):
     def finalize(self):
         self.fileio.close()
 
+@ClassLogger
 class NetworkInputStream(InputStream):
     def __init__(self, endpoint, size):
         InputStream.__init__(self, size)
@@ -288,8 +339,8 @@ class NetworkInputStream(InputStream):
         return read
 
     def finalize(self):
-        pass
-        #self.endpoint.kill()
+        if __debug__: self.logger.debug("Finalizing.")
+        self.endpoint.kill()
 
 @ClassLogger
 class NetworkOutputStream(object):
@@ -300,5 +351,5 @@ class NetworkOutputStream(object):
         self.endpoint.send(iobuffer)
     
     def finalize(self):
-        #self.endpoint.kill()
-        pass
+        if __debug__: self.logger.debug("Finalizing.")
+        self.endpoint.kill()

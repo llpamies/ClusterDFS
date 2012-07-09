@@ -1,10 +1,17 @@
-import dl
+try:
+    import dl
+    dl_mod = True
+except:
+    dl_mod = False
+    
 import sys
 import os.path
 
 libc_options = ['/lib/libc.so.6', '/lib/i386-linux-gnu/libc.so.6']
 
 def setprocname(name=None):
+    if not dl_mod: return False
+    
     if name==None:
         name = sys.argv[0].split('/')[-1]
 

@@ -61,8 +61,8 @@ class NetworkEndpoint(object):
         self._to_stream = 0
         self._partial_buffer = 0
     
-    def new_writer(self):
-        return OutputStreamWriter(self.output_stream)
+    def new_writer(self, async=False):
+        return OutputStreamWriter(self.output_stream, async=async)
     
     def recv_stream(self):
         stream = self.recv()
@@ -70,8 +70,8 @@ class NetworkEndpoint(object):
             raise TypeError("An InputStream was expected.")
         return stream
 
-    def recv_reader(self):
-        return InputStreamReader(self.recv_stream())
+    def recv_reader(self, async=False):
+        return InputStreamReader(self.recv_stream(), async=async)
 
     def _recv_integer(self):
         # signed 8 bytes integer
@@ -92,7 +92,8 @@ class NetworkEndpoint(object):
         self._send_bytes(data)
     
     def _send_bytes_sendall(self, data):
-        self.socket.sendall(data)
+        ret = self.socket.sendall(data)
+        assert ret==None
 
     def _send_bytes_iter(self, data):
         total = len(data)
@@ -160,6 +161,15 @@ class NetworkEndpoint(object):
 
     def _fill(self, memview):
         nbytes = min(self._partial_buffer, len(memview))
+        received = self.socket.recv_into(memview[:nbytes])
+        if received == 0:
+            raise IOError("Connection reset.")
+        self._partial_buffer -= received 
+        if __debug__: self._streamed += received
+        if __debug__: self.logger.debug("Received buffer (%d bytes).", received)
+        return received
+        '''
+        nbytes = min(self._partial_buffer, len(memview))
         received = 0
         while received < nbytes:
             new_recv = self.socket.recv_into(memview[received:nbytes])
@@ -170,7 +180,8 @@ class NetworkEndpoint(object):
         self._streamed += received
         if __debug__: self.logger.debug("Received buffer (%d bytes).", received)
         return received
-
+        '''
+    
     def recv_into(self, memview):
         try:
             if self._partial_buffer==0:
@@ -229,6 +240,7 @@ class NetworkEndpoint(object):
         return commands.getoutput("/sbin/ifconfig").split("\n")[1].split()[1][5:]
 
     def kill(self):
+        if __debug__: self.logger.debug("Killing socket.")
         self.socket.shutdown(socket.SHUT_WR)
         self.socket.close()
 
@@ -240,35 +252,38 @@ class ServerHandle(NetworkEndpoint):
         self.server = server
 
     def handle(self):
+        send_ack = True
         response = False
         try:
             self.process_query()
             response = True
 
         except socket.error as e:
-            self.logger.error("Failed connection from %s: %s."%(repr(self.address), unicode(e)))
-            response = None
+            self.logger.error("Failed connection from %s (child of %s): %s."%(repr(self.address), repr(self.server.address), unicode(e)))
                         
         except NetworkException as e:
             self.logger.error("RaisedNetworkException:\n"+unicode(e))
             e.log_forward((socket.gethostname(),self.server.address[1]))
             self.send(e)
+            send_ack = False
 
         except Exception as e:
             self.logger.error("RaisedException:\n"+traceback.format_exc())
             ne = NetworkException(type(e).__name__+': '+unicode(e))
             ne.log_forward((socket.gethostname(),self.server.address[1]))
             self.send(ne)
+            send_ack = False
 
         finally:
+            if __debug__:  self.logger.debug("executing finally statement.")
             try:
-                if response!=None:
+                if send_ack:
                     self.send(0 if response else -1)
                 if __debug__: self.logger.debug("Closing connection.")
                 self.socket.shutdown(socket.SHUT_WR)
                 self.socket.close()
             except Exception as e:
-                self.logger.debug("ERROR: %s",unicode(e))
+                if __debug__: self.logger.debug("ERROR: %s",unicode(e))
                 pass
 
 class Server():

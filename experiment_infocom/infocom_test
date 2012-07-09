@@ -1,0 +1,191 @@
+#!/usr/bin/env python
+from __future__ import division
+import os
+import sys
+import platform
+sys.path.append(os.getcwd())
+if platform.architecture()==('32bit', 'ELF'):
+    sys.path.append(os.getcwd()+'/lib/')
+elif platform.architecture()==('64bit', 'ELF'):
+    sys.path.append(os.getcwd()+'/lib64/')
+else:
+    raise OSError('Platform is not supported.')
+        
+import gevent
+import time
+import random
+import threading
+import paramiko
+import cPickle as pickle
+
+from clusterdfs.networking import Client
+from clusterdfs.datanode import DataNodeConfig, DataNodeClient
+
+class Congester(object):
+    def __init__(self):
+        self.nodes = [l.split(' ')[0] for l in open('../cluster_management/nodes.db','r')]
+        random.shuffle(self.nodes)
+
+        self.clean = "tc qdisc del dev eth0 root && tc -s qdisc ls dev eth0"
+        self.conge = "tc qdisc add dev eth0 root handle 1: htb default 12 && tc class add dev eth0 parent 1:1 classid 1:12 htb rate %(Mbps)dMbps ceil %(Mbps)dMbps && tc qdisc add dev eth0 parent 1:12 netem delay 100ms 10ms"
+
+    def _congest(self, node, Mbps):
+        conge = self.conge%{'Mbps':Mbps}
+        
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(node, username='root')
+        stdin, stdout, stderr = ssh.exec_command(self.clean)
+        stdout.channel.recv_exit_status()
+        stdin, stdout, stderr = ssh.exec_command(conge)
+        stdout.channel.recv_exit_status()
+        print node, 'congested'
+
+    def _free(self, node):
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(node, username='root')
+        stdin, stdout, stderr = ssh.exec_command(self.clean)
+        stdout.channel.recv_exit_status()
+        print node, 'free'
+
+    def congest(self, proportion, Mbps):
+        p = []
+        x = int(round(len(self.nodes)*proportion))
+        for node in self.nodes[:x]:
+            thread = threading.Thread(target=self._congest, args=(node,Mbps))
+            thread.start()
+            p.append(thread)
+        for node in self.nodes[x:]:
+            thread = threading.Thread(target=self._free, args=(node,))
+            thread.start()
+            p.append(thread)
+        for i in p:
+            i.join()
+
+class RunnerPipe(object):
+    def __init__(self, nodes, name=None, block_id ='girl.64mb'):
+        self.k = 11
+        self.n = 16
+        self.f = open(name if name!=None else 'times_pipe.dat','a')
+        self.nodes = nodes
+        self.block_id = block_id
+
+    def run(self, iters=500):
+        for i in xrange(iters):
+            total = self.coding()
+            print 'pipe',total
+            print >>self.f, total
+            self.f.flush()
+      
+    def runp(self, iters=500):
+        for it in xrange(iters):
+            times = []
+            a = []
+            for i in xrange(16):
+                a.append(gevent.spawn(self.coding))
+            for p in a:
+                times.append(p.get())
+            
+            total = max(times)
+            print 'pipe_parallel',total
+            print >>self.f, total
+            self.f.flush()
+
+    def coding(self):
+        nodess = ';'.join(map(str, self.nodes))
+        client = DataNodeClient(*self.nodes[-1])
+        start = time.time()
+        client.coding(self.block_id, 'enc_node15', nodess)
+        total = time.time()-start
+        client.kill()
+        return total
+
+class RunnerCauchy(object):              
+    def __init__(self, nodes, name=None, block_id='girl.64mb'):
+        self.f = open(name if name!=None else 'times_cauchy.dat','a')
+        self.nodes = nodes
+        self.block_id = block_id
+
+    def run(self, iters=500):
+        for i in xrange(iters):
+            total = self.coding(0)
+            print 'cauchy',total
+            print >>self.f, total
+            self.f.flush()
+
+    def runp(self, iters=500):
+        for it in xrange(iters):
+            times = []
+            a = []
+            for i in xrange(16):
+                a.append(gevent.spawn(self.coding, i))
+            for p in a:
+                times.append(p.get())
+                
+            total = max(times)
+            print 'cauchy_parallel',total
+            print >>self.f, total
+            self.f.flush()
+
+    def coding(self, i):
+        node = self.nodes[i]
+        copy = self.nodes[:]
+        copy.remove(node)
+        random.shuffle(copy)
+        sources = copy[:11]
+        dests = copy[11:]
+        
+        client = Client(node[0], 6969)
+        start = time.time()
+        client.send(pickle.dumps((self.block_id, sources, dests)))
+        client.assert_ack()
+        total = time.time()-start
+        client.kill()
+        return total
+
+if __name__=='__main__':
+    ips_file = sys.argv[1]
+    nodes = [(x[:-1],DataNodeConfig.port) for x in open(ips_file)]
+
+    """
+        Experiment measuring individual coding times.
+    """
+    ps = RunnerPipe(nodes, name='/tmp/pipe')
+    ps.run(1)
+    
+    pp = RunnerPipe(nodes, name='/tmp/pipe_par')
+    pp.runp(1)
+    
+    cs = RunnerCauchy(nodes, name='/tmp/cauchy')
+    cs.run(1)
+    
+    cp = RunnerCauchy(nodes, name='/tmp/cauchy_par')
+    cp.runp(1)
+
+'''
+c = Congester()
+for iter in xrange(10):
+    for bw in [None,1,100,500,1000]:
+        print 'BW:', bw, '\n'
+        if bw==None:
+            c.congest(0.0, None)
+        else:
+            c.congest(1.0, bw)
+         
+        ps = RunnerPipe(name='times_pipe_seq_%s.dat'%unicode(bw))
+        ps.run(16)
+        print ''
+        
+        pp = RunnerPipe(name='times_pipe_par_%s.dat'%unicode(bw))
+        pp.runp(1)
+        print ''
+        
+        es = RunnerEC(name='times_cauchy_seq_%s.dat'%unicode(bw))
+        es.run(16)
+        print ''
+        
+        ep = RunnerEC(name='times_cauchy_par_%s.dat'%unicode(bw))
+        ep.runp(1)
+        print ''
+'''
