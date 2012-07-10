@@ -22,8 +22,8 @@ from clusterdfs.networking import Client
 from clusterdfs.datanode import DataNodeConfig, DataNodeClient
 
 class Congester(object):
-    def __init__(self):
-        self.nodes = [l.split(' ')[0] for l in open('../cluster_management/nodes.db','r')]
+    def __init__(self, nodes):
+        self.nodes = [node[0] for node in nodes]
         random.shuffle(self.nodes)
 
         self.clean = "tc qdisc del dev eth0 root && tc -s qdisc ls dev eth0"
@@ -151,42 +151,33 @@ if __name__=='__main__':
     """
         Experiment measuring individual coding times.
     """
+    '''
     while True:
         ps = RunnerPipe(nodes, name='results_pipe.dat')
         ps.run(1)
         
-        #pp = RunnerPipe(nodes, name='results_pipe_par.dat')
-        #pp.runp(1)
+        pp = RunnerPipe(nodes, name='results_pipe_par.dat')
+        pp.runp(1)
         
         cs = RunnerCauchy(nodes, name='results_cauchy.dat')
         cs.run(1)
         
-        #cp = RunnerCauchy(nodes, name='results_cauchy_par.dat')
-        #cp.runp(1)
+        cp = RunnerCauchy(nodes, name='results_cauchy_par.dat')
+        cp.runp(1)
+    '''
 
-'''
-c = Congester()
-for iter in xrange(10):
-    for bw in [None,1,100,500,1000]:
-        print 'BW:', bw, '\n'
-        if bw==None:
-            c.congest(0.0, None)
-        else:
-            c.congest(1.0, bw)
-         
-        ps = RunnerPipe(name='times_pipe_seq_%s.dat'%unicode(bw))
-        ps.run(16)
-        print ''
-        
-        pp = RunnerPipe(name='times_pipe_par_%s.dat'%unicode(bw))
-        pp.runp(1)
-        print ''
-        
-        es = RunnerEC(name='times_cauchy_seq_%s.dat'%unicode(bw))
-        es.run(16)
-        print ''
-        
-        ep = RunnerEC(name='times_cauchy_par_%s.dat'%unicode(bw))
-        ep.runp(1)
-        print ''
-'''
+    """
+        Experiment to measure the effects of congestion.
+    """
+    c = Congester(nodes)
+    while True:
+        for n,p in [('33',.3333), ('66',.6666), ('100',1.0)]:
+            for bw in [500,1000]:
+                c.congest(p, bw)
+                print '\n', bw, p
+                
+                ps = RunnerPipe(nodes, name='times_pipe_%s_%s.dat'%(n, unicode(bw)))
+                ps.run(1)                
+                
+                cs = RunnerCauchy(nodes, name='times_cauchy_%s_%s.dat'%(n,unicode(bw)))
+                cs.run(1)
