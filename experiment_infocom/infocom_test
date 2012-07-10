@@ -151,17 +151,18 @@ if __name__=='__main__':
     """
         Experiment measuring individual coding times.
     """
-    ps = RunnerPipe(nodes, name='/tmp/pipe')
-    ps.run(1)
-    
-    pp = RunnerPipe(nodes, name='/tmp/pipe_par')
-    pp.runp(1)
-    
-    cs = RunnerCauchy(nodes, name='/tmp/cauchy')
-    cs.run(1)
-    
-    cp = RunnerCauchy(nodes, name='/tmp/cauchy_par')
-    cp.runp(1)
+    while True:
+        ps = RunnerPipe(nodes, name='results_pipe.dat')
+        ps.run(1)
+        
+        #pp = RunnerPipe(nodes, name='results_pipe_par.dat')
+        #pp.runp(1)
+        
+        cs = RunnerCauchy(nodes, name='results_cauchy.dat')
+        cs.run(1)
+        
+        #cp = RunnerCauchy(nodes, name='results_cauchy_par.dat')
+        #cp.runp(1)
 
 '''
 c = Congester()
