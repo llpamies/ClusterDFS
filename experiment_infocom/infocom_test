@@ -39,7 +39,7 @@ class Congester(object):
         stdout.channel.recv_exit_status()
         stdin, stdout, stderr = ssh.exec_command(conge)
         stdout.channel.recv_exit_status()
-        print node, 'congested'
+        #print node, 'congested'
 
     def _free(self, node):
         ssh = paramiko.SSHClient()
@@ -47,7 +47,7 @@ class Congester(object):
         ssh.connect(node, username='root')
         stdin, stdout, stderr = ssh.exec_command(self.clean)
         stdout.channel.recv_exit_status()
-        print node, 'free'
+        #print node, 'free'
 
     def congest(self, proportion, Mbps):
         p = []
@@ -151,33 +151,41 @@ if __name__=='__main__':
     """
         Experiment measuring individual coding times.
     """
-    '''
     while True:
-        ps = RunnerPipe(nodes, name='results_pipe.dat')
+        ps = RunnerPipe(nodes, name='times_pipe.dat')
         ps.run(1)
         
-        pp = RunnerPipe(nodes, name='results_pipe_par.dat')
+        pp = RunnerPipe(nodes, name='times_pipe_par.dat')
         pp.runp(1)
         
-        cs = RunnerCauchy(nodes, name='results_cauchy.dat')
-        cs.run(1)
+        #cs = RunnerCauchy(nodes, name='times_cauchy.dat')
+        #cs.run(1)
         
-        cp = RunnerCauchy(nodes, name='results_cauchy_par.dat')
-        cp.runp(1)
-    '''
+        #cp = RunnerCauchy(nodes, name='times_cauchy_par.dat')
+        #cp.runp(1)
+
 
     """
         Experiment to measure the effects of congestion.
     """
+    '''
     c = Congester(nodes)
+    bw = 500
     while True:
-        for n,p in [('33',.3333), ('66',.6666), ('100',1.0)]:
-            for bw in [500,1000]:
-                c.congest(p, bw)
-                print '\n', bw, p
-                
-                ps = RunnerPipe(nodes, name='times_pipe_%s_%s.dat'%(n, unicode(bw)))
-                ps.run(1)                
-                
-                cs = RunnerCauchy(nodes, name='times_cauchy_%s_%s.dat'%(n,unicode(bw)))
-                cs.run(1)
+        for n,p in [('25',.25), ('50',.5), ('75',.75), ('100',1.0)]:
+            c.congest(p, bw)
+            print '\n', bw, p
+            
+            ps = RunnerPipe(nodes, name='times_pipe_%s.dat'%(n))
+            ps.run(1)
+            
+            pp = RunnerPipe(nodes, name='times_pipe_par_%s.dat'%(n))
+            pp.runp(1)
+            
+            cs = RunnerCauchy(nodes, name='times_cauchy_%s.dat'%(n))
+            cs.run(1)
+            
+            cp = RunnerCauchy(nodes, name='times_cauchy_par_%s.dat'%(n))
+            cp.runp(1)
+    '''
+            

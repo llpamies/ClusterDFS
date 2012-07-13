@@ -1,14 +1,11 @@
 import io
 import sys
-import gc
 import os.path
 import numpy
 import gevent.queue
 import gevent.event
 
 from clusterdfs.common import ClassLogger
-
-from galoisbuffer import GaloisBuffer
 
 @ClassLogger
 class IOBuffer(object):
@@ -40,8 +37,6 @@ class IOBuffer(object):
         self.buff = bytearray(size)
         self.mem = memoryview(self.buff)
         self.reset(factory=factory, size=size)
-        
-        self.galois = GaloisBuffer(size, bitfield=16, buffer=self.buff)
 
     def reset(self, factory=None, size=None):
         if size==None:
@@ -97,10 +92,11 @@ class IOBufferFactory(object):
     
 @ClassLogger
 class InputStreamReader(object):
-    def __init__(self, input_stream, debug_name=None, num_buffers=2, size=None, async=False):
+    def __init__(self, input_stream, debug_name=None, num_buffers=2, size=None,
+                  async=False):
         '''
-        If the 'size' is larger than the 'available()' bytes in the input stream,
-        then garbage is read to achieve 'size'.
+        If the 'size' is larger than the 'available()' bytes in the input
+        stream, then garbage is read to achieve 'size'.
         '''
         if not isinstance(input_stream, InputStream):
             raise TypeError('input_stream must be an InputStream instance.')
@@ -121,11 +117,14 @@ class InputStreamReader(object):
         else:
             self.get = self._get_sync
                 
-        if __debug__: self.logger.debug("Starting new %d bytes reader (async=%s).", self.size, unicode(self.async))
+        if __debug__: self.logger.debug("Starting new %d bytes reader "
+                                        "(async=%s).", self.size, 
+                                        unicode(self.async))
 
     def _run(self):
         assert self.async
-        if __debug__: self.logger.debug("Starting %s internal async process.", self.debug_name or hex(id(self)))
+        if __debug__: self.logger.debug("Starting %s internal async process.",
+                                        self.debug_name or hex(id(self)))
         try:
             while self.bytes_left>0:
                 self.queue.put(self._get_sync())
@@ -133,7 +132,8 @@ class InputStreamReader(object):
             return False
         
         except Exception, e:
-            self.logger.error('Reader subprocesses got a %s exception.', e.__class__.__name__)
+            self.logger.error('Reader subprocesses got a %s exception.', 
+                              e.__class__.__name__)
             self.logger.error(unicode(e))
             self.exc_info = sys.exc_info()
             return True
@@ -143,7 +143,8 @@ class InputStreamReader(object):
             self.finalized = True
 
     def _get_async(self):
-        if __debug__: self.logger.debug("Calling async get in %s.", self.debug_name or hex(id(self)))
+        if __debug__: self.logger.debug("Calling async get in %s.", 
+                                        self.debug_name or hex(id(self)))
         try:
             iobuffer = self.queue.get()
             if self.exc_info:
@@ -153,7 +154,8 @@ class InputStreamReader(object):
             raise IOError("Reader ended before it was expected!")
 
     def _get_sync(self):
-        if __debug__: self.logger.debug("Calling sync get in %s.", self.debug_name or hex(id(self)))
+        if __debug__: self.logger.debug("Calling sync get in %s.", 
+                                        self.debug_name or hex(id(self)))
         assert self.bytes_left>0
         if __debug__: self.logger.debug("%s get iteration %d/%d.", 
                                         self.debug_name or hex(id(self)),
@@ -267,7 +269,8 @@ class OutputStreamWriter(object):
 class InputStream(object):
     def __init__(self, size):
         if (type(size)!=int and type(size)!=long) or size<=0:
-            raise TypeError("Parameter size must be a positive integer, got %s."%str(size))
+            raise TypeError("Parameter size must be a positive integer, "
+                            "got %s."%str(size))
         self.size = size
         self.bytes_left = size
 

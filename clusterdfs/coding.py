@@ -8,10 +8,6 @@ from bufferedio import InputStreamReader, InputStream
 from networking import Client
 from galoisbuffer import GaloisBuffer
 
-#coding = sys.modules[__name__]
-
-bitfield_op = 16
-
 class CodingException(Exception):
     pass
 
@@ -32,13 +28,17 @@ class TemporalBufferQueue(gevent.queue.Queue):
         
 @ClassLogger
 class RemoteNetCodingReader(InputStreamReader):
-    def __init__(self, node_addr, block_id, coding_id, stream_id, nodes, **kwargs):
+    def __init__(self, node_addr, block_id, coding_id, stream_id,
+                  nodes, **kwargs):
         nodes = ';'.join(map(str, nodes))
         self.client = Client(*node_addr)
-        self.header = DataNodeHeader.generate(DataNodeHeader.OP_CODING, block_id, coding_id, stream_id, nodes)
+        self.header = DataNodeHeader.generate(DataNodeHeader.OP_CODING, 
+                                              block_id, coding_id, stream_id, 
+                                              nodes)
         self.client.send(self.header)
         
-        super(RemoteNetCodingReader, self).__init__(self.client.recv_stream(), async=True, **kwargs)
+        super(RemoteNetCodingReader, self).__init__(self.client.recv_stream(),
+                                                    async=True, **kwargs)
     
     def finalize(self, kill=False):
         if not kill:
@@ -69,26 +69,31 @@ class NetCodingExecutor(object):
     sizes = {}
     numreg = collections.defaultdict(int)
 
-    def __init__(self, operations, resolver, stream_id):
+    def __init__(self, operations, resolver, stream_id, bf=16):
         self.stream_id = stream_id
         self.operations = operations
         self.resolver = resolver
         self.finalized = False
+        self.bitfield_op = bf
 
         # Create dictionaries
         self.buffers = {}
         self.readers = {}
         self.writers = {}
         
-        if __debug__: self.logger.debug('New executor for %d %s.', os.getpid(), self.stream_id)
+        if __debug__: self.logger.debug('New executor for %d %s.', os.getpid(),
+                                        self.stream_id)
         if __debug__: self.logger.debug('Processing streams...')
         for stream_name, stream_type in self.operations.streams:
-            if __debug__: self.logger.debug('Processing stream: %s.',unicode(stream_name))
+            if __debug__: self.logger.debug('Processing stream: %s.',
+                                            unicode(stream_name))
             if stream_type=='r':
-                self.readers[stream_name] = self.resolver.get_reader(stream_name)
+                self.readers[stream_name] = self.resolver.\
+                get_reader(stream_name)
                     
             elif stream_type=='w':
-                self.writers[stream_name] = self.resolver.get_writer(stream_name)
+                self.writers[stream_name] = self.resolver.\
+                get_writer(stream_name)
 
             else:
                 raise TypeError('Invalid operation stream.')
@@ -100,7 +105,8 @@ class NetCodingExecutor(object):
             if self.size==None:
                 self.size = s
             elif self.size!=s:
-                raise CodingException('Reader sizes are not aligned: %d, %d.'%(self.size, s))
+                raise CodingException('Reader sizes are not aligned: %d, %d.'\
+                                      %(self.size, s))
                 
         # If there is no input stream... (no fixed size) we
         # try to get the size from a previous set executor in the same stream.
@@ -110,7 +116,8 @@ class NetCodingExecutor(object):
         assert self.size!=None
         
         if self.stream_id not in NetCodingExecutor.queues:
-            NetCodingExecutor.queues[self.stream_id] = collections.defaultdict(gevent.queue.Queue)
+            NetCodingExecutor.queues[self.stream_id] = collections\
+            .defaultdict(gevent.queue.Queue)
         
         # Keep track of which iobuffers we have to free here.
         self.disposable_buffers = set()
@@ -151,7 +158,8 @@ class NetCodingExecutor(object):
         '''
                  
     def execute_instruction(self, instruction):
-        if __debug__: self.logger.debug('NetCodingInputStream %s is processing instruction %s',
+        if __debug__: self.logger.debug('NetCodingInputStream %s is '
+                                        'processing instruction %s',
                                         self.stream_id, str(instruction))
        
         bytes_processed = None
@@ -197,10 +205,10 @@ class NetCodingExecutor(object):
         elif instruction[0]=='IADD':
             src_buffer = self.buffers[instruction[2]]
             dst_buffer = self.buffers[instruction[1]]
-            #src = GaloisBuffer(src_buffer.size, bitfield=bitfield_op, buffer=src_buffer.buff)
-            #dst = GaloisBuffer(dst_buffer.size, bitfield=bitfield_op, buffer=dst_buffer.buff)
-            src = src_buffer.galois
-            dst = dst_buffer.galois
+            src = GaloisBuffer(src_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=src_buffer.buff)
+            dst = GaloisBuffer(dst_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=dst_buffer.buff)
             dst += src
             dst_buffer.length = src_buffer.length
             bytes_processed = dst_buffer.length
@@ -216,10 +224,10 @@ class NetCodingExecutor(object):
                 self.logger.error('Buffer sizes are not aligned.')
                 raise CodingException('Buffers sizes are not aligned.')
 
-            #src = GaloisBuffer(src_buffer.size, bitfield=bitfield_op, buffer=src_buffer.buff)
-            #dst = GaloisBuffer(dst_buffer.size, bitfield=bitfield_op, buffer=dst_buffer.buff)
-            src = src_buffer.galois
-            dst = dst_buffer.galois
+            src = GaloisBuffer(src_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=src_buffer.buff)
+            dst = GaloisBuffer(dst_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=dst_buffer.buff)
             src.multadd(literal_value, dest=dst, add=True)
             dst_buffer.length = src_buffer.length
             bytes_processed = dst_buffer.length
@@ -235,19 +243,21 @@ class NetCodingExecutor(object):
                 self.logger.error('Buffer sizes are not aligned.')
                 raise CodingException('Buffer sizes are not aligned.')
 
-            #src = GaloisBuffer(src_buffer.size, bitfield=bitfield_op, buffer=src_buffer.buff)
-            #dst = GaloisBuffer(dst_buffer.size, bitfield=bitfield_op, buffer=dst_buffer.buff)
-            src = src_buffer.galois
-            dst = dst_buffer.galois
+            src = GaloisBuffer(src_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=src_buffer.buff)
+            dst = GaloisBuffer(dst_buffer.size, bitfield=self.bitfield_op, 
+                               buffer=dst_buffer.buff)
             src.multadd(literal_value, dest=dst, add=False)
             dst_buffer.length = src_buffer.length
             bytes_processed = dst_buffer.length
 
         else:
-            raise CodingException('Invalid coding instruction: %s'%(str(instruction)))
+            raise CodingException('Invalid coding instruction: %s'\
+                                  %(str(instruction)))
 
         if bytes_processed==None:
-            raise CodingException('The number of processed bytes was not set for instruction: %s'%(str(instruction)))
+            raise CodingException('The number of processed bytes was not set '
+                                  'for instruction: %s'%(str(instruction)))
 
         return bytes_processed
 
@@ -271,13 +281,15 @@ class NetCodingExecutor(object):
             iobuffer.free()
         self.disposable_buffers.clear()
         
-        if __debug__: self.logger.debug('Coding processed %d bytes.', bytes_processed)
+        if __debug__: self.logger.debug('Coding processed %d bytes.', 
+                                        bytes_processed)
         return bytes_processed
 
     def execute(self):
         read = 0
         while read<self.size:
-            if __debug__: self.logger.debug('execute iter %d/%d', read, self.size)
+            if __debug__: self.logger.debug('execute iter %d/%d', 
+                                            read, self.size)
             read += self.execute_step()
             yield read
             
@@ -298,7 +310,9 @@ class NetCodingInputStream(InputStream):
         else:
             nbytes = min(iobuffer.size, nbytes)
 
-        if __debug__: self.logger.debug('Reading %d bytes from NetCodingInputStream %s.', nbytes, hex(id(self)))
+        if __debug__: self.logger.debug('Reading %d bytes from '
+                                        'NetCodingInputStream %s.', nbytes,
+                                        hex(id(self)))
         num_read = self.executor.execute_step(iobuffer)
         if __debug__: self.logger.debug('Coding processed %d bytes.', num_read)
         assert num_read==iobuffer.length, (num_read,iobuffer.length)

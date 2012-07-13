@@ -20,7 +20,9 @@ class NameNodeConfig(Config):
     def check(self):
         pass
 
-NameNodeTreeNode = collections.namedtuple('NameNodeTreeNode', ['id', 'name', 'children', 'parent', 'dir'])    
+NameNodeTreeNode = collections.namedtuple('NameNodeTreeNode', 
+                                          ['id', 'name', 'children', 'parent',
+                                           'dir'])    
 
 class NameNodeTreeException(Exception):
     pass
@@ -31,7 +33,9 @@ class NameNodeTree(object):
     def __init__(self, config):
         self.dict = shelve.open(config.tree_file)
         if self.rootname not in self.dict:
-            self.store(NameNodeTreeNode(id=self.rootname, name=None, children={None:self.rootname}, parent=None, dir=True))
+            self.store(NameNodeTreeNode(id=self.rootname, name=None, 
+                                        children={None:self.rootname}, 
+                                        parent=None, dir=True))
         self.root = self.dict[self.rootname] 
     
     def store(self, node):
@@ -60,7 +64,8 @@ class NameNodeTree(object):
             raise NameNodeTreeException('Parent path should be a directory.')
         if name in parent.children: 
             raise NameNodeTreeException('The file exists.')
-        new = NameNodeTreeNode(id=uuid.uuid4().hex, name=name, children={}, parent=parent.id, dir=directory)
+        new = NameNodeTreeNode(id=uuid.uuid4().hex, name=name, children={}, 
+                               parent=parent.id, dir=directory)
         parent.children[name] = new.id
         self.store(parent)
         self.store(new)
@@ -90,7 +95,9 @@ class NameNodeTree(object):
         
         parent_dst, name_dst = self.parse(dst)
         parent_dst.children[name_dst] = node_src.id
-        new = NameNodeTreeNode(id=node_src.id, name=name_dst, children=node_src.children, parent=parent_dst.id, dir=node_src.dir)
+        new = NameNodeTreeNode(id=node_src.id, name=name_dst, 
+                               children=node_src.children, parent=parent_dst.id, 
+                               dir=node_src.dir)
         self.store(parent_dst)
         self.store(new)
         self.dict.sync()
@@ -146,7 +153,8 @@ class NameNodeQuery(ServerHandle):
         stored_blocks = self.recv()
         for file_uuid, block_uuid in stored_blocks:
             self.server.db_direct_lookup[file_uuid][block_uuid] = datanode_addr
-            self.server.db_reverse_lookup[datanode_addr].add((file_uuid, block_uuid))
+            self.server.db_reverse_lookup[datanode_addr].add((file_uuid, 
+                                                              block_uuid))
         
         return ServerResponse.ok(msg='Blocks processed.')
 
@@ -159,7 +167,8 @@ class NameNodeQuery(ServerHandle):
 class NameNode(Server):
     def __init__(self, config):
         self.config = config
-        logging.info("Configuring NameNode to listen on localhost:%d"%(self.config.port))
+        logging.info("Configuring NameNode to listen on localhost:%d"\
+                     %(self.config.port))
         Server.__init__(self, NameNodeQuery, port=self.config.port)
 
         self.db_nodes = []

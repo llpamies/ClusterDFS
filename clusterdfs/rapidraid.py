@@ -1,10 +1,11 @@
 from clusterdfs.common import ClassLogger
-from clusterdfs.coding import NetCodingOperations, NetCodingResolver, RemoteNetCodingReader
+from clusterdfs.coding import NetCodingOperations, NetCodingResolver,\
+                              RemoteNetCodingReader
 
 import re
 import galoisbuffer
 
-
+'''
 bf = 16
 xis = [48386, 55077, 40589, 63304, 49062, 47871, 17507, 49390,
         54054, 45897, 55796, 27611, 50294, 30336, 882, 60087,
@@ -18,7 +19,7 @@ xis = [141, 139, 79, 152, 152, 243, 2, 37, 149, 189, 174,
        149, 237, 31, 198, 15, 45, 138, 246, 100, 101, 16]
 psis = [129, 207, 158, 56, 171, 247, 145, 139, 137, 211, 190,
         230, 140, 177, 75, 47, 94, 60, 244, 69, 190, 167]
-'''
+
 
 xisi = map(lambda x: galoisbuffer.inverse_val(x, bitfield=bf), xis)
            
@@ -52,14 +53,16 @@ dec_node5_aux.add(('COPY','stream','temp'))
 
 # Decoding Operations:
 
-dec_node0 = NetCodingOperations('dec_node0', [('coded0', 'r'), ('orig0', 'w')], output='stream')
+dec_node0 = NetCodingOperations('dec_node0', [('coded0', 'r'), ('orig0', 'w')],
+                                output='stream')
 dec_node0.add(('LOAD','temp','coded0'))
 dec_node0.add(('MULT', 'temp', xisi[0], 'temp'))
 dec_node0.add(('MULT', 'stream', psis[0], 'temp'))
 dec_node0.add(('WRITE', 'temp', 'orig0'))
 dec_node0.add(('PUSH', 'queue', 'temp'))
 
-dec_node1 = NetCodingOperations('dec_node1', [('coded1', 'r'), ('orig1', 'w'), ('dec_node0', 'r')], output='stream')
+dec_node1 = NetCodingOperations('dec_node1', [('coded1', 'r'), ('orig1', 'w'), 
+                                              ('dec_node0', 'r')], output='stream')
 dec_node1.add(('LOAD','temp','coded1'))
 dec_node1.add(('LOAD','prev','dec_node0'))
 dec_node1.add(('IADD', 'temp', 'prev'))
@@ -69,7 +72,8 @@ dec_node1.add(('PUSH', 'queue', 'temp'))
 dec_node1.add(('COPY', 'stream', 'prev'))
 dec_node1.add(('MULADD', 'stream', psis[1],'temp'))
 
-dec_node2 = NetCodingOperations('dec_node2', [('coded2', 'r'), ('orig2', 'w'), ('dec_node1', 'r')], output='stream')
+dec_node2 = NetCodingOperations('dec_node2', [('coded2', 'r'), ('orig2', 'w'), 
+                                              ('dec_node1', 'r')], output='stream')
 dec_node2.add(('LOAD','temp','coded2'))
 dec_node2.add(('LOAD','prev','dec_node1'))
 dec_node2.add(('IADD', 'temp', 'prev'))
@@ -79,7 +83,8 @@ dec_node2.add(('PUSH', 'queue', 'temp'))
 dec_node2.add(('COPY', 'stream', 'prev'))
 dec_node2.add(('MULADD', 'stream', psis[2],'temp'))
 
-dec_node3 = NetCodingOperations('dec_node3', [('coded3', 'r'), ('orig3', 'w'), ('dec_node2', 'r')], output='stream')
+dec_node3 = NetCodingOperations('dec_node3', [('coded3', 'r'), ('orig3', 'w'), 
+                                              ('dec_node2', 'r')], output='stream')
 dec_node3.add(('LOAD','temp','coded3'))
 dec_node3.add(('LOAD','prev','dec_node2'))
 dec_node3.add(('IADD', 'temp', 'prev'))
@@ -89,7 +94,8 @@ dec_node3.add(('PUSH', 'queue', 'temp'))
 dec_node3.add(('COPY', 'stream', 'prev'))
 dec_node3.add(('MULADD', 'stream', psis[3],'temp'))
 
-dec_node4 = NetCodingOperations('dec_node4', [('coded4', 'r'), ('orig4', 'w'), ('dec_node3', 'r')], output='stream')
+dec_node4 = NetCodingOperations('dec_node4', [('coded4', 'r'), ('orig4', 'w'), 
+                                              ('dec_node3', 'r')], output='stream')
 dec_node4.add(('LOAD','temp','coded4'))
 dec_node4.add(('LOAD','prev','dec_node3'))
 dec_node4.add(('IADD', 'temp', 'prev'))
@@ -99,7 +105,10 @@ dec_node4.add(('PUSH', 'queue', 'temp'))
 dec_node4.add(('COPY', 'stream', 'prev'))
 dec_node4.add(('MULADD', 'stream', psis[4],'temp'))
 
-dec_node5 = NetCodingOperations('dec_node5', [('coded5', 'r'), ('orig5', 'w'), ('dec_node4', 'r'), ('dec_node0_aux', 'r')], output='stream')
+dec_node5 = NetCodingOperations('dec_node5', [('coded5', 'r'), ('orig5', 'w'), 
+                                              ('dec_node4', 'r'), 
+                                              ('dec_node0_aux', 'r')], 
+                                output='stream')
 dec_node5.add(('LOAD','temp','coded5'))
 dec_node5.add(('LOAD','prev','dec_node4'))
 dec_node5.add(('LOAD','prevaux','dec_node0_aux'))
@@ -112,7 +121,10 @@ dec_node5.add(('COPY', 'stream', 'prev'))
 dec_node5.add(('MULADD', 'stream', psis[5],'prevaux'))
 dec_node5.add(('MULADD', 'stream', psis[6],'temp'))
 
-dec_node6 = NetCodingOperations('dec_node6', [('coded6', 'r'), ('orig6', 'w'), ('dec_node5', 'r'), ('dec_node1_aux', 'r')], output='stream')
+dec_node6 = NetCodingOperations('dec_node6', [('coded6', 'r'), ('orig6', 'w'), 
+                                              ('dec_node5', 'r'), 
+                                              ('dec_node1_aux', 'r')], 
+                                output='stream')
 dec_node6.add(('LOAD','temp','coded6'))
 dec_node6.add(('LOAD','prev','dec_node5'))
 dec_node6.add(('LOAD','prevaux','dec_node1_aux'))
@@ -124,7 +136,10 @@ dec_node6.add(('COPY', 'stream', 'prev'))
 dec_node6.add(('MULADD', 'stream', psis[7],'prevaux'))
 dec_node6.add(('MULADD', 'stream', psis[8],'temp'))
 
-dec_node7 = NetCodingOperations('dec_node7', [('coded7', 'r'), ('orig7', 'w'), ('dec_node6', 'r'), ('dec_node2_aux', 'r')], output='stream')
+dec_node7 = NetCodingOperations('dec_node7', [('coded7', 'r'), ('orig7', 'w'), 
+                                              ('dec_node6', 'r'), 
+                                              ('dec_node2_aux', 'r')], 
+                                output='stream')
 dec_node7.add(('LOAD','temp','coded7'))
 dec_node7.add(('LOAD','prev','dec_node6'))
 dec_node7.add(('LOAD','prevaux','dec_node2_aux'))
@@ -136,7 +151,10 @@ dec_node7.add(('COPY', 'stream', 'prev'))
 dec_node7.add(('MULADD', 'stream', psis[9],'prevaux'))
 dec_node7.add(('MULADD', 'stream', psis[10],'temp'))
 
-dec_node8 = NetCodingOperations('dec_node8', [('coded8', 'r'), ('orig8', 'w'), ('dec_node7', 'r'), ('dec_node3_aux', 'r')], output='stream')
+dec_node8 = NetCodingOperations('dec_node8', [('coded8', 'r'), ('orig8', 'w'), 
+                                              ('dec_node7', 'r'), 
+                                              ('dec_node3_aux', 'r')], 
+                                output='stream')
 dec_node8.add(('LOAD','temp','coded8'))
 dec_node8.add(('LOAD','prev','dec_node7'))
 dec_node8.add(('LOAD','prevaux','dec_node3_aux'))
@@ -148,7 +166,10 @@ dec_node8.add(('COPY', 'stream', 'prev'))
 dec_node8.add(('MULADD', 'stream', psis[11],'prevaux'))
 dec_node8.add(('MULADD', 'stream', psis[12],'temp'))
 
-dec_node9 = NetCodingOperations('dec_node9', [('coded9', 'r'), ('orig9', 'w'), ('dec_node8', 'r'), ('dec_node4_aux', 'r')], output='stream')
+dec_node9 = NetCodingOperations('dec_node9', [('coded9', 'r'), ('orig9', 'w'), 
+                                              ('dec_node8', 'r'), 
+                                              ('dec_node4_aux', 'r')], 
+                                output='stream')
 dec_node9.add(('LOAD','temp','coded9'))
 dec_node9.add(('LOAD','prev','dec_node8'))
 dec_node9.add(('LOAD','prevaux','dec_node4_aux'))
@@ -160,7 +181,10 @@ dec_node9.add(('COPY', 'stream', 'prev'))
 dec_node9.add(('MULADD', 'stream', psis[13],'prevaux'))
 dec_node9.add(('MULADD', 'stream', psis[14],'temp'))
 
-dec_node10 = NetCodingOperations('dec_node10', [('coded10', 'r'), ('orig10', 'w'), ('dec_node9', 'r'), ('dec_node5_aux', 'r')])
+dec_node10 = NetCodingOperations('dec_node10', [('coded10', 'r'), 
+                                                ('orig10', 'w'), 
+                                                ('dec_node9', 'r'), 
+                                                ('dec_node5_aux', 'r')])
 dec_node10.add(('LOAD','temp','coded10'))
 dec_node10.add(('LOAD','prev','dec_node9'))
 dec_node10.add(('LOAD','prevaux','dec_node5_aux'))
@@ -171,13 +195,16 @@ dec_node10.add(('WRITE', 'temp', 'orig10'))
 
 # Encoding operations:
 
-enc_node0 = NetCodingOperations('enc_node0', [('part0', 'r'), ('coded0', 'w')], output='stream')
+enc_node0 = NetCodingOperations('enc_node0', [('part0', 'r'), ('coded0', 'w')], 
+                                output='stream')
 enc_node0.add(('LOAD', 'temp', 'part0'))
 enc_node0.add(('MULT', 'stream', psis[0], 'temp'))
 #enc_node0.add(('MULT', 'temp', xis[0], 'temp'))
 enc_node0.add(('WRITE', 'temp', 'coded0'))
 
-enc_node1 = NetCodingOperations('enc_node1', [('part1', 'r'), ('coded1', 'w'), ('enc_node0','r')], output='stream')
+enc_node1 = NetCodingOperations('enc_node1', [('part1', 'r'), ('coded1', 'w'), 
+                                              ('enc_node0','r')], 
+                                output='stream')
 enc_node1.add(('LOAD', 'local', 'part1'))
 enc_node1.add(('LOAD', 'prev', 'enc_node0'))
 enc_node1.add(('COPY', 'stream', 'prev'))
@@ -185,7 +212,9 @@ enc_node1.add(('MULADD', 'stream', psis[1], 'local'))
 enc_node1.add(('MULADD', 'prev', xis[1], 'local'))
 enc_node1.add(('WRITE', 'prev', 'coded1'))
 
-enc_node2 = NetCodingOperations('enc_node2', [('part2', 'r'), ('coded2', 'w'), ('enc_node1','r')], output='stream')
+enc_node2 = NetCodingOperations('enc_node2', [('part2', 'r'), ('coded2', 'w'), 
+                                              ('enc_node1','r')], 
+                                output='stream')
 enc_node2.add(('LOAD', 'local', 'part2'))
 enc_node2.add(('LOAD', 'prev', 'enc_node1'))
 enc_node2.add(('COPY', 'stream', 'prev'))
@@ -193,7 +222,9 @@ enc_node2.add(('MULADD', 'stream', psis[2], 'local'))
 enc_node2.add(('MULADD', 'prev', xis[2], 'local'))
 enc_node2.add(('WRITE', 'prev', 'coded2'))
 
-enc_node3 = NetCodingOperations('enc_node3', [('part3', 'r'), ('coded3', 'w'), ('enc_node2','r')], output='stream')
+enc_node3 = NetCodingOperations('enc_node3', [('part3', 'r'), ('coded3', 'w'), 
+                                              ('enc_node2','r')], 
+                                output='stream')
 enc_node3.add(('LOAD', 'local', 'part3'))
 enc_node3.add(('LOAD', 'prev', 'enc_node2'))
 enc_node3.add(('COPY', 'stream', 'prev'))
@@ -201,7 +232,9 @@ enc_node3.add(('MULADD', 'stream', psis[3], 'local'))
 enc_node3.add(('MULADD', 'prev', xis[3], 'local'))
 enc_node3.add(('WRITE', 'prev', 'coded3'))
 
-enc_node4 = NetCodingOperations('enc_node4', [('part4', 'r'), ('coded4', 'w'), ('enc_node3','r')], output='stream')
+enc_node4 = NetCodingOperations('enc_node4', [('part4', 'r'), ('coded4', 'w'), 
+                                              ('enc_node3','r')], 
+                                output='stream')
 enc_node4.add(('LOAD', 'local', 'part4'))
 enc_node4.add(('LOAD', 'prev', 'enc_node3'))
 enc_node4.add(('COPY', 'stream', 'prev'))
@@ -209,7 +242,10 @@ enc_node4.add(('MULADD', 'stream', psis[4], 'local'))
 enc_node4.add(('MULADD', 'prev', xis[4], 'local'))
 enc_node4.add(('WRITE', 'prev', 'coded4'))
 
-enc_node5 = NetCodingOperations('enc_node5', [('part5', 'r'), ('part0', 'r'), ('coded5', 'w'), ('enc_node4','r')], output='stream')
+enc_node5 = NetCodingOperations('enc_node5', [('part5', 'r'), ('part0', 'r'), 
+                                              ('coded5', 'w'), 
+                                              ('enc_node4','r')], 
+                                output='stream')
 enc_node5.add(('LOAD', 'local0', 'part0'))
 enc_node5.add(('LOAD', 'local5', 'part5'))
 enc_node5.add(('LOAD', 'prev', 'enc_node4'))
@@ -220,7 +256,10 @@ enc_node5.add(('MULADD', 'prev', xis[5], 'local0'))
 enc_node5.add(('MULADD', 'prev', xis[6], 'local5'))
 enc_node5.add(('WRITE', 'prev', 'coded5'))
 
-enc_node6 = NetCodingOperations('enc_node6', [('part6', 'r'), ('part1', 'r'), ('coded6', 'w'), ('enc_node5','r')], output='stream')
+enc_node6 = NetCodingOperations('enc_node6', [('part6', 'r'), ('part1', 'r'), 
+                                              ('coded6', 'w'), 
+                                              ('enc_node5','r')], 
+                                output='stream')
 enc_node6.add(('LOAD', 'local1', 'part1'))
 enc_node6.add(('LOAD', 'local6', 'part6'))
 enc_node6.add(('LOAD', 'prev', 'enc_node5'))
@@ -231,7 +270,10 @@ enc_node6.add(('MULADD', 'prev', xis[7], 'local1'))
 enc_node6.add(('MULADD', 'prev', xis[8], 'local6'))
 enc_node6.add(('WRITE', 'prev', 'coded6'))
 
-enc_node7 = NetCodingOperations('enc_node7', [('part7', 'r'), ('part2', 'r'), ('coded7', 'w'), ('enc_node6','r')], output='stream')
+enc_node7 = NetCodingOperations('enc_node7', [('part7', 'r'), ('part2', 'r'), 
+                                              ('coded7', 'w'), 
+                                              ('enc_node6','r')], 
+                                output='stream')
 enc_node7.add(('LOAD', 'local2', 'part2'))
 enc_node7.add(('LOAD', 'local7', 'part7'))
 enc_node7.add(('LOAD', 'prev', 'enc_node6'))
@@ -242,7 +284,10 @@ enc_node7.add(('MULADD', 'prev', xis[9], 'local2'))
 enc_node7.add(('MULADD', 'prev', xis[10], 'local7'))
 enc_node7.add(('WRITE', 'prev', 'coded7'))
 
-enc_node8 = NetCodingOperations('enc_node8', [('part8', 'r'), ('part3', 'r'), ('coded8', 'w'), ('enc_node7','r')], output='stream')
+enc_node8 = NetCodingOperations('enc_node8', [('part8', 'r'), ('part3', 'r'), 
+                                              ('coded8', 'w'),
+                                              ('enc_node7','r')], 
+                                output='stream')
 enc_node8.add(('LOAD', 'local3', 'part3'))
 enc_node8.add(('LOAD', 'local8', 'part8'))
 enc_node8.add(('LOAD', 'prev', 'enc_node7'))
@@ -253,7 +298,10 @@ enc_node8.add(('MULADD', 'prev', xis[11], 'local3'))
 enc_node8.add(('MULADD', 'prev', xis[12], 'local8'))
 enc_node8.add(('WRITE', 'prev', 'coded8'))
 
-enc_node9 = NetCodingOperations('enc_node9', [('part9', 'r'), ('part4', 'r'), ('coded9', 'w'), ('enc_node8','r')], output='stream')
+enc_node9 = NetCodingOperations('enc_node9', [('part9', 'r'), ('part4', 'r'), 
+                                              ('coded9', 'w'), 
+                                              ('enc_node8','r')], 
+                                output='stream')
 enc_node9.add(('LOAD', 'local4', 'part4'))
 enc_node9.add(('LOAD', 'local9', 'part9'))
 enc_node9.add(('LOAD', 'prev', 'enc_node8'))
@@ -264,7 +312,10 @@ enc_node9.add(('MULADD', 'prev', xis[13], 'local4'))
 enc_node9.add(('MULADD', 'prev', xis[14], 'local9'))
 enc_node9.add(('WRITE', 'prev', 'coded9'))
 
-enc_node10 = NetCodingOperations('enc_node10', [('part10', 'r'), ('part5', 'r'), ('coded10', 'w'), ('enc_node9','r')], output='stream')
+enc_node10 = NetCodingOperations('enc_node10', [('part10', 'r'), ('part5', 'r'), 
+                                                ('coded10', 'w'), 
+                                                ('enc_node9','r')], 
+                                 output='stream')
 enc_node10.add(('LOAD', 'local5', 'part5'))
 enc_node10.add(('LOAD', 'local10', 'part10'))
 enc_node10.add(('LOAD', 'prev', 'enc_node9'))
@@ -275,7 +326,10 @@ enc_node10.add(('MULADD', 'prev', xis[15], 'local5'))
 enc_node10.add(('MULADD', 'prev', xis[16], 'local10'))
 enc_node10.add(('WRITE', 'prev', 'coded10'))
 
-enc_node11 = NetCodingOperations('enc_node11', [('part6', 'r'), ('coded11', 'w'), ('enc_node10','r')], output='stream')
+enc_node11 = NetCodingOperations('enc_node11', [('part6', 'r'), 
+                                                ('coded11', 'w'), 
+                                                ('enc_node10','r')], 
+                                 output='stream')
 enc_node11.add(('LOAD', 'local', 'part6'))
 enc_node11.add(('LOAD', 'prev', 'enc_node10'))
 enc_node11.add(('COPY', 'stream', 'prev'))
@@ -283,7 +337,10 @@ enc_node11.add(('MULADD', 'stream', psis[17], 'local'))
 enc_node11.add(('MULADD', 'prev', xis[17], 'local'))
 enc_node11.add(('WRITE', 'prev', 'coded11'))
 
-enc_node12 = NetCodingOperations('enc_node12', [('part7', 'r'), ('coded12', 'w'), ('enc_node11','r')], output='stream')
+enc_node12 = NetCodingOperations('enc_node12', [('part7', 'r'), 
+                                                ('coded12', 'w'), 
+                                                ('enc_node11','r')], 
+                                 output='stream')
 enc_node12.add(('LOAD', 'local', 'part7'))
 enc_node12.add(('LOAD', 'prev', 'enc_node11'))
 enc_node12.add(('COPY', 'stream', 'prev'))
@@ -291,7 +348,10 @@ enc_node12.add(('MULADD', 'stream', psis[18], 'local'))
 enc_node12.add(('MULADD', 'prev', xis[18], 'local'))
 enc_node12.add(('WRITE', 'prev', 'coded12'))
 
-enc_node13 = NetCodingOperations('enc_node13', [('part8', 'r'), ('coded13', 'w'), ('enc_node12','r')], output='stream')
+enc_node13 = NetCodingOperations('enc_node13', [('part8', 'r'), 
+                                                ('coded13', 'w'), 
+                                                ('enc_node12','r')], 
+                                 output='stream')
 enc_node13.add(('LOAD', 'local', 'part8'))
 enc_node13.add(('LOAD', 'prev', 'enc_node12'))
 enc_node13.add(('COPY', 'stream', 'prev'))
@@ -299,7 +359,10 @@ enc_node13.add(('MULADD', 'stream', psis[19], 'local'))
 enc_node13.add(('MULADD', 'prev', xis[19], 'local'))
 enc_node13.add(('WRITE', 'prev', 'coded13'))
 
-enc_node14 = NetCodingOperations('enc_node14', [('part9', 'r'), ('coded14', 'w'), ('enc_node13','r')], output='stream')
+enc_node14 = NetCodingOperations('enc_node14', [('part9', 'r'), 
+                                                ('coded14', 'w'), 
+                                                ('enc_node13','r')], 
+                                 output='stream')
 enc_node14.add(('LOAD', 'local', 'part9'))
 enc_node14.add(('LOAD', 'prev', 'enc_node13'))
 enc_node14.add(('COPY', 'stream', 'prev'))
@@ -307,7 +370,9 @@ enc_node14.add(('MULADD', 'stream', psis[20], 'local'))
 enc_node14.add(('MULADD', 'prev', xis[20], 'local'))
 enc_node14.add(('WRITE', 'prev', 'coded14'))
 
-enc_node15 = NetCodingOperations('enc_node15', [('part10', 'r'), ('coded15', 'w'), ('enc_node14','r')])
+enc_node15 = NetCodingOperations('enc_node15', [('part10', 'r'), 
+                                                ('coded15', 'w'), 
+                                                ('enc_node14','r')])
 enc_node15.add(('LOAD', 'local', 'part10'))
 enc_node15.add(('LOAD', 'prev', 'enc_node14'))
 enc_node15.add(('MULADD', 'prev', xis[21], 'local'))
@@ -351,7 +416,8 @@ operations['dec_node3_aux'] = dec_node3_aux
 operations['dec_node4_aux'] = dec_node4_aux
 operations['dec_node5_aux'] = dec_node5_aux
 
-test = NetCodingOperations('test', [('part10', 'r'), ('part5', 'r'), ('coded10', 'w'), ('part0','r')])
+test = NetCodingOperations('test', [('part10', 'r'), ('part5', 'r'), 
+                                    ('coded10', 'w'), ('part0','r')])
 test.add(('LOAD', 'local5', 'part5'))
 test.add(('LOAD', 'local10', 'part10'))
 test.add(('LOAD', 'prev', 'part0'))
@@ -375,22 +441,26 @@ class RapidRaidResolver(NetCodingResolver):
         if key.startswith('enc_node'):
             coding_id = key[8:]
             coding_id_int = int(re.search("(\d*)",coding_id).group(0))         
-            return RemoteNetCodingReader(self.get_enc_node(coding_id_int), self.block_id,
-                                         key, self.stream_id, self.nodes, debug_name=key)
+            return RemoteNetCodingReader(self.get_enc_node(coding_id_int),
+                                         self.block_id, key, self.stream_id, 
+                                         self.nodes, debug_name=key)
         
         elif key.startswith('dec_node'):
             coding_id = key[8:]
             coding_id_int = int(re.search("(\d*)",coding_id).group(0))
-            return RemoteNetCodingReader(self.get_enc_node(coding_id_int), self.block_id, 
-                                         key, self.stream_id, self.nodes, debug_name=key)
+            return RemoteNetCodingReader(self.get_enc_node(coding_id_int), 
+                                         self.block_id, key, self.stream_id, 
+                                         self.nodes, debug_name=key)
         
         elif key.startswith('part'):
             coding_id = int(key[4:])
-            return self.block_store.get_reader(self.get_part(coding_id), debug_name=key)
+            return self.block_store.get_reader(self.get_part(coding_id), 
+                                               debug_name=key)
         
         elif key.startswith('coded'):
             coding_id = int(key[5:])
-            return self.block_store.get_reader(self.get_coded(coding_id), debug_name=key)
+            return self.block_store.get_reader(self.get_coded(coding_id), 
+                                               debug_name=key)
         
         else:
             assert False
@@ -398,11 +468,13 @@ class RapidRaidResolver(NetCodingResolver):
     def get_writer(self, key):
         if key.startswith('coded'):
             coding_id = int(key[5:])
-            return self.block_store.get_writer(self.get_coded(coding_id), debug_name=key)
+            return self.block_store.get_writer(self.get_coded(coding_id), 
+                                               debug_name=key)
         
         elif key.startswith('orig'):
             coding_id = int(key[4:])
-            return self.block_store.get_writer(self.get_orig(coding_id), debug_name=key)
+            return self.block_store.get_writer(self.get_orig(coding_id), 
+                                               debug_name=key)
           
         else:
             assert False
@@ -420,4 +492,4 @@ class RapidRaidResolver(NetCodingResolver):
         return self.block_id+'.orig%d'%coding_id
 
 k = 11
-__all__ = [operations, RapidRaidResolver, k]
+__all__ = [operations, RapidRaidResolver, k, bf]

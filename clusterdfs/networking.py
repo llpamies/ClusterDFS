@@ -7,7 +7,8 @@ import traceback
 import socket
 
 from common import ClassLogger
-from bufferedio import NetworkOutputStream, OutputStreamWriter, InputStream, InputStreamReader, NetworkInputStream, IOBuffer
+from bufferedio import NetworkOutputStream, OutputStreamWriter, InputStream,\
+                       InputStreamReader, NetworkInputStream, IOBuffer
 
 class NetworkHeader(object):
     ERROR = 1
@@ -24,7 +25,8 @@ class NetworkException(Exception):
         self.trace = trace
         if not trace:
             exc_info = sys.exc_info()
-            self.trace = ''.join(traceback.format_list(traceback.extract_tb(exc_info[2])))
+            err_list = traceback.extract_tb(exc_info[2])
+            self.trace = ''.join(traceback.format_list(err_list))
             self.trace += '  '+message
     
     def log_forward(self, node):
@@ -34,8 +36,8 @@ class NetworkException(Exception):
         return self.trace
 
     @classmethod
-    def unserialize(clazz, s):
-        return clazz(trace=s)
+    def unserialize(klass, s):
+        return klass(trace=s)
 
     def __str__(self):
         return '\n'+self.trace
@@ -48,13 +50,16 @@ class NetworkEndpoint(object):
         self.output_stream = NetworkOutputStream(self)
 
         '''
-            The sendall socket mehtod can only be used in blocking (timeout==None) sockets.
+            The sendall socket mehtod can only be used in blocking 
+            (timeout==None) sockets.
         '''
         if self.socket.gettimeout()==None:
-            if __debug__: self.logger.debug("Using '_send_bytes_sendall' function.")
+            if __debug__: self.logger.debug("Using '_send_bytes_sendall' "
+                                            "function.")
             self._send_bytes = self._send_bytes_sendall
         else:
-            if __debug__: self.logger.debug("Using '_send_bytes_iter' function.")
+            if __debug__: self.logger.debug("Using '_send_bytes_iter' "
+                                            "function.")
             self._send_bytes = self._send_bytes_iter
 
         self._streamed = 0
@@ -124,18 +129,22 @@ class NetworkEndpoint(object):
     def recv(self):
         try:
             if self._partial_buffer>0:
-                raise IOError("Cannot read new data if the previous buffer wasn't completely read.")
+                raise IOError("Cannot read new data if the previous buffer "
+                              "wasn't completely read.")
                 
             if self.reading_stream!=None:
                 if not self.reading_stream.is_processed():
-                    raise Exception("Cannot receive data from the socket until the stream is processed.")
+                    raise Exception("Cannot receive data from the socket until"
+                                    " the stream is processed.")
                 self.reading_stream = None
 
             packet_type, data_len = self._recv_header()
-            if __debug__: self.logger.debug("Received header: %d %d.", packet_type, data_len)
+            if __debug__: self.logger.debug("Received header: %d %d.",
+                                            packet_type, data_len)
 
             if packet_type==NetworkHeader.ERROR:
-                if __debug__: self.logger.debug("Received error (%d bytes).", data_len)
+                if __debug__: self.logger.debug("Received error (%d bytes).",
+                                                data_len)
                 self._recv_error(data_len)
             
             elif packet_type==NetworkHeader.INTEGER:
@@ -143,17 +152,20 @@ class NetworkEndpoint(object):
                 return self._recv_integer()
             
             elif packet_type==NetworkHeader.STRING:
-                if __debug__: self.logger.debug("Received string (%d bytes).", data_len)
+                if __debug__: self.logger.debug("Received string (%d bytes).",
+                                                data_len)
                 return self._recv_bytes(data_len)
             
             elif packet_type==NetworkHeader.STREAM_HEADER:
-                if __debug__: self.logger.debug("Received stream (%d bytes).", data_len)
+                if __debug__: self.logger.debug("Received stream (%d bytes).",
+                                                data_len)
                 self._streamed = 0
                 self._to_stream = data_len
                 return NetworkInputStream(self, data_len)
 
             else:
-                raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
+                raise TypeError("Incompatible NetworkHeader value %d."\
+                                %(packet_type))
 
         except:
             #self.kill()
@@ -197,8 +209,14 @@ class NetworkEndpoint(object):
                     return self._fill(memview)
     
                 else:
-                    if __debug__: self.logger.debug("Invalid header after receiving %d streamed bytes out of %d."%(self._streamed, self._to_stream))
-                    raise TypeError("Incompatible NetworkHeader value %d."%(packet_type))
+                    if __debug__: self.logger.debug("Invalid header after "
+                                                    "receiving %d streamed "
+                                                    "bytes out of %d."\
+                                                    %(self._streamed,
+                                                      self._to_stream))
+                                                    
+                    raise TypeError("Incompatible NetworkHeader value %d."\
+                                    %(packet_type))
                 
             else:
                 return self._fill(memview)
@@ -237,7 +255,8 @@ class NetworkEndpoint(object):
             raise TypeError('Invalid type.')
 
     def local_address(self):
-        return commands.getoutput("/sbin/ifconfig").split("\n")[1].split()[1][5:]
+        ifconfig = commands.getoutput("/sbin/ifconfig")
+        return ifconfig.split("\n")[1].split()[1][5:]
 
     def kill(self):
         if __debug__: self.logger.debug("Killing socket.")
@@ -251,6 +270,9 @@ class ServerHandle(NetworkEndpoint):
         self.address = address
         self.server = server
 
+    def process_query(self):
+        raise NotImplementedError()
+
     def handle(self):
         send_ack = True
         response = False
@@ -259,7 +281,9 @@ class ServerHandle(NetworkEndpoint):
             response = True
 
         except socket.error as e:
-            self.logger.error("Failed connection from %s (child of %s): %s."%(repr(self.address), repr(self.server.address), unicode(e)))
+            self.logger.error("Failed connection from %s (child of %s): %s."\
+                              %(repr(self.address), repr(self.server.address),
+                                unicode(e)))
                         
         except NetworkException as e:
             self.logger.error("RaisedNetworkException:\n"+unicode(e))
@@ -289,7 +313,8 @@ class ServerHandle(NetworkEndpoint):
 class Server():
     def __init__(self, handle_class=ServerHandle, addr='', port=7777):
         self.address = (addr,port)
-        self.server = gevent.server.StreamServer(self.address, self.netser_handle)
+        self.server = gevent.server.StreamServer(self.address,
+                                                 self.netser_handle)
         self.handle_class = handle_class
 
     '''

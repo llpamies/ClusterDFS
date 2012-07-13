@@ -5,7 +5,8 @@ import hashlib
 import cStringIO
 
 class DataBlockHeader(object):
-    '''Each stored block has a 256 byte header. This is its binary structure (all little-endian):
+    '''Each stored block has a 256 byte header. This is its binary structure
+     (all little-endian):
      + 32 bytes (  0 --  31) --> file uuid (hex formatted string)
      + 32 bytes ( 32 --  71) --> block uuid (hex formatted string)
      +  8 bytes ( 72 --  83) --> offset in the file (unsigned int)
@@ -98,14 +99,18 @@ class DataBlock(file):
         if block_uuid==None: block_uuid = '%032x'%uuid.uuid4().int
         
         header = DataBlockHeader(file_uuid=file_uuid, block_uuid=block_uuid)
-        f = DataBlock(os.path.join(base_dir, DataBlock.filename(file_uuid, block_uuid)), 'w')
+        f = DataBlock(os.path.join(base_dir, 
+                                   DataBlock.filename(file_uuid, 
+                                                      block_uuid)), 'w')
         f.init(header)
         f.seek(DataBlockHeader.SIZE)
         return f
 
     @staticmethod
     def open(file_uuid, block_uuid, base_dir=''):
-        f = DataBlock(os.path.join(base_dir, DataBlock.filename(file_uuid, block_uuid)), 'r')
+        f = DataBlock(os.path.join(base_dir, 
+                                   DataBlock.filename(file_uuid, 
+                                                      block_uuid)), 'r')
         f.init(DataBlockHeader.parse(f))
         return f
 

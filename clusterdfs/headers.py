@@ -29,11 +29,13 @@ class DataNodeHeader(object):
             raise TypeError("must be a string")
         reader = StringIO(s)
         decoder = avro.io.BinaryDecoder(reader)
-        datum_reader = avro.io.DatumReader(writers_schema=DataNodeHeader.schema, readers_schema=DataNodeHeader.schema)
+        datum_reader = avro.io.DatumReader(writers_schema=DataNodeHeader.schema,
+                                           readers_schema=DataNodeHeader.schema)
         return datum_reader.read(decoder)
     
     @staticmethod
-    def generate(operation, block_id=None, coding_id='', stream_id='', nodes=''):
+    def generate(operation, block_id=None, coding_id='', stream_id='', 
+                 nodes=''):
         writer = StringIO()
         encoder = avro.io.BinaryEncoder(writer)
         datum_writer = avro.io.DatumWriter(writers_schema=DataNodeHeader.schema)

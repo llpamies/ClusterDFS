@@ -8,7 +8,8 @@ from networking import *
 class DFS(Client):
     def store(self, path):
         length = os.path.getsize(path)
-        header = {'op':DataNodeHeader.OP_STORE, 'length':length, 'id':path.split('/')[-1]}
+        header = {'op':DataNodeHeader.OP_STORE, 'length':length, 
+                  'id':path.split('/')[-1]}
         header['fwdlist'] = [('172.21.48.151',7777)]
         print header
         self.send(header)
